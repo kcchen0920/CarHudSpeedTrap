@@ -30,13 +30,20 @@ if (Test-Path -LiteralPath $apkOutput) {
     Write-Host "Build SUCCESS! Output: $targetApk" -ForegroundColor Green
 
     # 自動同步至 Google 雲端硬碟 (G:\我的雲端硬碟\車用 & D:\文件\car)
-    $cloudDirs = @("G:\我的雲端硬碟\車用", "G:\我的雲端硬碟\Car", "D:\文件\car")
+    $cloudDirs = @("G:\我的雲端硬碟\車用", "D:\文件\car")
     foreach ($cDir in $cloudDirs) {
         try {
-            if (-not (Test-Path $cDir)) { [System.IO.Directory]::CreateDirectory($cDir) | Out-Null }
-            Copy-Item -Path $targetApk -Destination (Join-Path $cDir "CarHud-debug.apk") -Force
-            Write-Host "Synced to Cloud Drive: $cDir\CarHud-debug.apk" -ForegroundColor Green
-        } catch {}
+            if (-not (Test-Path $cDir)) { 
+                New-Item -ItemType Directory -Path $cDir -Force -ErrorAction SilentlyContinue | Out-Null
+            }
+            if (Test-Path $cDir) {
+                $destFile = Join-Path $cDir "CarHud-debug.apk"
+                Copy-Item -Path $targetApk -Destination $destFile -Force
+                Write-Host "Synced to Cloud Drive: $destFile" -ForegroundColor Green
+            }
+        } catch {
+            Write-Host "Sync to $cDir failed: $_" -ForegroundColor Yellow
+        }
     }
     
     $adb = Join-Path $scriptRoot "tools\platform-tools\adb.exe"
