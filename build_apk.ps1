@@ -29,8 +29,8 @@ if (Test-Path -LiteralPath $apkOutput) {
     Copy-Item -LiteralPath $apkOutput -Destination $targetApk -Force
     Write-Host "Build SUCCESS! Output: $targetApk" -ForegroundColor Green
 
-    # 自動同步至 Google 雲端硬碟 (D:\文件\car & D:\文件\車用)
-    $cloudDirs = @("D:\文件\car", "D:\文件\車用")
+    # 自動同步至 Google 雲端硬碟 (G:\我的雲端硬碟\車用 & D:\文件\car)
+    $cloudDirs = @("G:\我的雲端硬碟\車用", "G:\我的雲端硬碟\Car", "D:\文件\car")
     foreach ($cDir in $cloudDirs) {
         try {
             if (-not (Test-Path $cDir)) { [System.IO.Directory]::CreateDirectory($cDir) | Out-Null }
