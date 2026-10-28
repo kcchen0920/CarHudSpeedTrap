@@ -145,6 +145,16 @@
                 android:textColor="#10B981"
                 android:textSize="13sp"
                 android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_diag_gps"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="車載 GPS 狀態: 等待定位訊號..."
+                android:textColor="#38BDF8"
+                android:textSize="13sp"
+                android:textStyle="bold" />
         </LinearLayout>
 
         <View

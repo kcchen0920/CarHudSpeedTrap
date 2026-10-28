@@ -113,11 +113,17 @@ class CarHudWidgetProvider : AppWidgetProvider() {
 
     override fun onEnabled(context: Context) {
         super.onEnabled(context)
-        // 核心亮點：CarWebGuru 載入 Widget 時，自動喚醒神盾 App，免手動點擊
+        // 核心亮點 1：啟動原生 GPS 即時車速引擎 (每 0.5 秒即時刷新)
+        GpsSpeedManager.startListening(context)
+
+        // 核心亮點 2：CarWebGuru 載入 Widget 時，自動喚醒神盾 App，免手動點擊
         SpeedTrapAutoLauncher.startSpeedTrapIfNeeded(context, bringHomeToFront = true)
     }
 
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
+        // 啟動原生 GPS 車速
+        GpsSpeedManager.startListening(context)
+
         // 每次桌面刷新時確保神盾在運行
         SpeedTrapAutoLauncher.startSpeedTrapIfNeeded(context, bringHomeToFront = true)
 

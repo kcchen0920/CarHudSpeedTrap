@@ -135,6 +135,15 @@ class MainActivity : AppCompatActivity() {
 
         val cur = SpeedTrapListenerService.latestData
         tvParsed.text = "解析結果: 速限 ${cur.speedLimit} | 距離 ${cur.distanceMeters}m | 車速 ${cur.currentSpeed} | ${cur.camType}"
+
+        val tvGps = findViewById<TextView>(R.id.tv_diag_gps)
+        if (GpsSpeedManager.isGpsActive) {
+            tvGps.text = "車載 GPS 狀態: 🟢 已連線 (即時車速: ${GpsSpeedManager.currentGpsSpeed} km/h)"
+            tvGps.setTextColor(0xFF38BDF8.toInt())
+        } else {
+            tvGps.text = "車載 GPS 狀態: 🟡 搜尋衛星中 / 未定位 (將以神盾時速為備援)"
+            tvGps.setTextColor(0xFFF59E0B.toInt())
+        }
     }
 
     private fun updateCurrentAaLabel(tv: TextView) {
@@ -187,6 +196,7 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         checkPermissions()
         updateDiagnosticPanel()
+        GpsSpeedManager.startListening(this)
     }
 
     private fun checkPermissions() {
@@ -195,6 +205,18 @@ class MainActivity : AppCompatActivity() {
         if (hasNotification) {
             btnNotification.text = "✓ 通知存取權已啟用 (監聽中)"
             btnNotification.isEnabled = false
+        }
+
+        // 自動請求 GPS 權限以啟用即時車速
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(
+                    arrayOf(
+                        android.Manifest.permission.ACCESS_FINE_LOCATION,
+                        android.Manifest.permission.ACCESS_COARSE_LOCATION
+                    ), 1001
+                )
+            }
         }
     }
 }
