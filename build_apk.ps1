@@ -4,8 +4,11 @@ $ErrorActionPreference = "Stop"
 $scriptRoot = $PSScriptRoot
 $javaHome = "C:\Program Files\Microsoft\jdk-17.0.21.21-hotspot"
 $androidHome = Join-Path $scriptRoot "tools\android-sdk"
-$gradleBat = Join-Path $scriptRoot "tools\gradle\bin\gradle.bat"
 $projectDir = Join-Path $scriptRoot "CarHudSpeedTrap"
+$gradleBat = Join-Path $scriptRoot "tools\gradle\bin\gradle.bat"
+if (-not (Test-Path -LiteralPath $gradleBat)) {
+    $gradleBat = Join-Path $projectDir "gradlew.bat"
+}
 
 Write-Host "Starting CarHudSpeedTrap Build..." -ForegroundColor Cyan
 
