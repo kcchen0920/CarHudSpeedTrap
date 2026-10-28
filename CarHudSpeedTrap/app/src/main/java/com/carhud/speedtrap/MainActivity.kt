@@ -29,26 +29,12 @@ class MainActivity : AppCompatActivity() {
         val btnChooseAA = findViewById<Button>(R.id.btn_choose_aa_app)
         val tvCurrentAA = findViewById<TextView>(R.id.tv_current_aa_pkg)
         val btnToggleOverlay = findViewById<Button>(R.id.btn_toggle_overlay)
-        val btnToggleBtAuto = findViewById<Button>(R.id.btn_toggle_bt_auto)
-        val btnTestClear = findViewById<Button>(R.id.btn_test_clear)
         val btnTestNormal = findViewById<Button>(R.id.btn_test_normal)
-        val btnTestWarn = findViewById<Button>(R.id.btn_test_warn)
         val btnTestOverspeed = findViewById<Button>(R.id.btn_test_overspeed)
+        val btnRebind = findViewById<Button>(R.id.btn_rebind_listener)
 
         // 讀取目前綁定的 AA App
         updateCurrentAaLabel(tvCurrentAA)
-
-        // 讀取藍牙連動狀態
-        val prefs = getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-        var isBtAuto = prefs.getBoolean(CarBluetoothReceiver.KEY_AUTO_BT_ENABLED, true)
-        updateBtAutoButtonText(btnToggleBtAuto, isBtAuto)
-
-        btnToggleBtAuto.setOnClickListener {
-            isBtAuto = !isBtAuto
-            prefs.edit().putBoolean(CarBluetoothReceiver.KEY_AUTO_BT_ENABLED, isBtAuto).apply()
-            updateBtAutoButtonText(btnToggleBtAuto, isBtAuto)
-            Toast.makeText(this, if (isBtAuto) "已啟用上車藍牙自動化！" else "已停用藍牙自動化", Toast.LENGTH_SHORT).show()
-        }
 
         // 1. 跳轉開啟通知監聽權限
         btnNotification.setOnClickListener {
@@ -71,12 +57,19 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 3. 選擇自訂 Android Auto 投屏 App
+        // 3. 強制重新連線 NotificationListener
+        btnRebind.setOnClickListener {
+            SpeedTrapListenerService.forceRebind(this)
+            Toast.makeText(this, "已發送強制重連指令！請確認狀態是否變綠燈", Toast.LENGTH_SHORT).show()
+            updateDiagnosticPanel()
+        }
+
+        // 4. 選擇自訂 Android Auto 投屏 App
         btnChooseAA.setOnClickListener {
             showAppPickerDialog(tvCurrentAA)
         }
 
-        // 4. 開關全域置頂橫條
+        // 5. 開關全域置頂橫條
         btnToggleOverlay.setOnClickListener {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
                 Toast.makeText(this, "請先取得懸浮窗權限！", Toast.LENGTH_SHORT).show()
@@ -95,44 +88,53 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 5. 模擬測試 (四種路況與警示階段)
-        btnTestClear.setOnClickListener {
-            val data = SpeedTrapData(60, 0, 50, "路況順暢")
-            CarHudWidgetProvider.updateWidgetData(this, 60, 0, 50, "🟢 路況順暢")
-            SpeedTrapListenerService.onDataUpdated?.invoke(data)
-            Toast.makeText(this, "已推送：🟢 路況順暢 (倒數清空)", Toast.LENGTH_SHORT).show()
-        }
-
+        // 6. 模擬測試數據
         btnTestNormal.setOnClickListener {
-            val data = SpeedTrapData(60, 450, 52, "固定測速")
-            CarHudWidgetProvider.updateWidgetData(this, 60, 450, 52, "固定測速")
-            SpeedTrapListenerService.onDataUpdated?.invoke(data)
-            Toast.makeText(this, "已推送巡航：速限 60 / 車速 52 / 距 450m", Toast.LENGTH_SHORT).show()
-        }
-
-        btnTestWarn.setOnClickListener {
-            val data = SpeedTrapData(60, 180, 62, "固定測速")
-            CarHudWidgetProvider.updateWidgetData(this, 60, 180, 62, "固定測速")
-            SpeedTrapListenerService.onDataUpdated?.invoke(data)
-            Toast.makeText(this, "已推送⚠️近距/微超警告：速限 60 / 車速 62 (琥珀光)", Toast.LENGTH_SHORT).show()
+            CarHudWidgetProvider.updateWidgetData(this, 60, 350, 54, "固定測速")
+            Toast.makeText(this, "已推送正常數據：速限 60 / 車速 54 / 距 350m", Toast.LENGTH_SHORT).show()
+            updateDiagnosticPanel()
         }
 
         btnTestOverspeed.setOnClickListener {
-            val data = SpeedTrapData(60, 220, 78, "固定測速")
-            CarHudWidgetProvider.updateWidgetData(this, 60, 220, 78, "固定測速")
-            SpeedTrapListenerService.onDataUpdated?.invoke(data)
-            Toast.makeText(this, "已推送🚨嚴重超速警戒：速限 60 / 車速 78 (紅光警示)", Toast.LENGTH_SHORT).show()
+            CarHudWidgetProvider.updateWidgetData(this, 60, 180, 72, "⚠️ 超速！固定測速")
+            Toast.makeText(this, "已推送超速數據：速限 60 / 車速 72 / 距 180m", Toast.LENGTH_SHORT).show()
+            updateDiagnosticPanel()
+        }
+
+        // 註冊即時診斷回呼
+        SpeedTrapListenerService.onDebugInfoUpdated = {
+            runOnUiThread {
+                updateDiagnosticPanel()
+            }
         }
     }
 
-    private fun updateBtAutoButtonText(btn: Button, isEnabled: Boolean) {
-        if (isEnabled) {
-            btn.text = "🚗 藍牙自動化：已啟用 (上車自動啟動)"
-            btn.setTextColor(0xFF10B981.toInt())
+    private fun updateDiagnosticPanel() {
+        val tvStatus = findViewById<TextView>(R.id.tv_listener_status)
+        val tvTime = findViewById<TextView>(R.id.tv_diag_time)
+        val tvPkg = findViewById<TextView>(R.id.tv_diag_pkg)
+        val tvRaw = findViewById<TextView>(R.id.tv_diag_raw)
+        val tvParsed = findViewById<TextView>(R.id.tv_diag_parsed)
+
+        val isGranted = NotificationManagerCompat.getEnabledListenerPackages(this).contains(packageName)
+
+        if (!isGranted) {
+            tvStatus.text = "● 監聽服務狀態: ❌ 尚未取得系統通知權限"
+            tvStatus.setTextColor(0xFFEF4444.toInt())
+        } else if (SpeedTrapListenerService.isConnected) {
+            tvStatus.text = "● 監聽服務狀態: 🟢 已連線運作中 (Listening)"
+            tvStatus.setTextColor(0xFF10B981.toInt())
         } else {
-            btn.text = "🚗 藍牙自動化：已停用 (點擊啟用)"
-            btn.setTextColor(0xFF94A3B8.toInt())
+            tvStatus.text = "● 監聽服務狀態: 🟡 權限已開但服務未連線 (請點右側強制重連)"
+            tvStatus.setTextColor(0xFFF59E0B.toInt())
         }
+
+        tvTime.text = "最後收到通知時間: ${SpeedTrapListenerService.lastNotificationTime}"
+        tvPkg.text = "通知 App 來源: ${SpeedTrapListenerService.lastPackageName}"
+        tvRaw.text = "原始通知文字: ${SpeedTrapListenerService.lastRawText}"
+
+        val cur = SpeedTrapListenerService.latestData
+        tvParsed.text = "解析結果: 速限 ${cur.speedLimit} | 距離 ${cur.distanceMeters}m | 車速 ${cur.currentSpeed} | ${cur.camType}"
     }
 
     private fun updateCurrentAaLabel(tv: TextView) {
@@ -184,13 +186,14 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         checkPermissions()
+        updateDiagnosticPanel()
     }
 
     private fun checkPermissions() {
         val hasNotification = NotificationManagerCompat.getEnabledListenerPackages(this).contains(packageName)
         val btnNotification = findViewById<Button>(R.id.btn_grant_notification)
         if (hasNotification) {
-            btnNotification.text = "✓ 通知存取權已啟用 (正常監聽中)"
+            btnNotification.text = "✓ 通知存取權已啟用 (監聽中)"
             btnNotification.isEnabled = false
         }
     }
