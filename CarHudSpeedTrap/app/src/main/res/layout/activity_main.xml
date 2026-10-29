@@ -216,6 +216,57 @@
             android:layout_marginBottom="16dp"
             android:background="#22FFFFFF" />
 
+        <!-- 神盾應用設定卡片 -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="【神盾測速 App 連動與喚醒設定】"
+            android:textColor="#FFFFFF"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tv_current_speedtrap_pkg"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="神盾應用偵測：正在檢查..."
+            android:textColor="#10B981"
+            android:textSize="13sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btn_choose_speedtrap_app"
+                android:layout_width="0dp"
+                android:layout_height="44dp"
+                android:layout_weight="1"
+                android:backgroundTint="#0369A1"
+                android:text="手動選擇神盾 App"
+                android:textSize="12sp" />
+
+            <Button
+                android:id="@+id/btn_test_launch_speedtrap"
+                android:layout_width="0dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:backgroundTint="#0F766E"
+                android:text="測試立即喚醒神盾"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="16dp"
+            android:layout_marginBottom="16dp"
+            android:background="#22FFFFFF" />
+
         <!-- 模式開關卡片 -->
         <TextView
             android:layout_width="wrap_content"

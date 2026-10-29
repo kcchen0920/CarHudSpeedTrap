@@ -37,6 +37,9 @@ class MainActivity : AppCompatActivity() {
         val btnLaunchSpeedTrap = findViewById<Button>(R.id.btn_launch_speedtrap)
         val btnChooseAA = findViewById<Button>(R.id.btn_choose_aa_app)
         val tvCurrentAA = findViewById<TextView>(R.id.tv_current_aa_pkg)
+        val btnChooseSpeedTrap = findViewById<Button?>(R.id.btn_choose_speedtrap_app)
+        val tvCurrentSpeedTrap = findViewById<TextView?>(R.id.tv_current_speedtrap_pkg)
+        val btnTestLaunchSpeedTrap = findViewById<Button?>(R.id.btn_test_launch_speedtrap)
         val btnToggleOverlay = findViewById<Button>(R.id.btn_toggle_overlay)
         val btnTestNormal = findViewById<Button>(R.id.btn_test_normal)
         val btnTestOverspeed = findViewById<Button>(R.id.btn_test_overspeed)
@@ -44,6 +47,15 @@ class MainActivity : AppCompatActivity() {
         val btnRebind = findViewById<Button>(R.id.btn_rebind_listener)
 
         updateCurrentAaLabel(tvCurrentAA)
+        updateSpeedTrapLabel(tvCurrentSpeedTrap)
+
+        btnChooseSpeedTrap?.setOnClickListener {
+            showSpeedTrapPickerDialog(tvCurrentSpeedTrap)
+        }
+
+        btnTestLaunchSpeedTrap?.setOnClickListener {
+            SpeedTrapAutoLauncher.startSpeedTrapIfNeeded(this, bringHomeToFront = false, forceLaunch = true)
+        }
 
         // 1. 啟用通知存取權
         btnNotification.setOnClickListener {
@@ -287,6 +299,7 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         checkPermissions()
         updateDiagnosticPanel()
+        updateSpeedTrapLabel(findViewById(R.id.tv_current_speedtrap_pkg))
 
         // 啟動 GPS 監聽
         GpsSpeedManager.startListening(this)
@@ -296,6 +309,55 @@ class MainActivity : AppCompatActivity() {
         if (hasNotification && !SpeedTrapListenerService.isConnected) {
             SpeedTrapListenerService.forceRebind(this)
         }
+    }
+
+    private fun updateSpeedTrapLabel(tv: TextView?) {
+        if (tv == null) return
+        val detectedPkg = SpeedTrapAutoLauncher.findSpeedTrapPackage(this)
+        if (detectedPkg != null) {
+            try {
+                val appInfo = packageManager.getApplicationInfo(detectedPkg, 0)
+                val label = packageManager.getApplicationLabel(appInfo).toString()
+                tv.text = "神盾應用：🟢 已識別到 $label ($detectedPkg)"
+                tv.setTextColor(0xFF10B981.toInt())
+                return
+            } catch (e: Exception) {}
+        }
+        tv.text = "神盾應用：🔴 尚未識別到，請點擊下方「手動選擇神盾 App」"
+        tv.setTextColor(0xFFEF4444.toInt())
+    }
+
+    private fun showSpeedTrapPickerDialog(tv: TextView?) {
+        val pm = packageManager
+        val intent = Intent(Intent.ACTION_MAIN, null).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+        }
+        val resolveInfos = pm.queryIntentActivities(intent, 0)
+
+        val appNames = mutableListOf<String>()
+        val packageNames = mutableListOf<String>()
+
+        for (info in resolveInfos) {
+            val name = info.loadLabel(pm).toString()
+            val pkg = info.activityInfo.packageName
+            if (pkg != packageName) {
+                appNames.add("$name ($pkg)")
+                packageNames.add(pkg)
+            }
+        }
+
+        val builder = AlertDialog.Builder(this)
+        builder.setTitle("請選擇車機上的神盾測速 App")
+        builder.setItems(appNames.toTypedArray()) { _, which ->
+            val selectedPkg = packageNames[which]
+            getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+                .edit().putString(SpeedTrapAutoLauncher.KEY_CUSTOM_SPEEDTRAP_PKG, selectedPkg).apply()
+            updateSpeedTrapLabel(tv)
+            Toast.makeText(this, "已綁定神盾應用！正在測試開啟...", Toast.LENGTH_SHORT).show()
+            SpeedTrapAutoLauncher.startSpeedTrapIfNeeded(this, bringHomeToFront = false, forceLaunch = true)
+        }
+        builder.setNegativeButton("取消", null)
+        builder.show()
     }
 
     private fun checkPermissions() {

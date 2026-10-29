@@ -57,16 +57,10 @@ class SpeedTrapListenerService : NotificationListenerService() {
         var onDebugInfoUpdated: (() -> Unit)? = null
 
         /**
-         * 檢查車機是否安裝了神盾測速照相
+         * 檢查車機是否安裝了神盾測速照相 (支援模糊比對與自訂綁定)
          */
         fun checkSpeedTrapInstalled(context: Context): Boolean {
-            val pm = context.packageManager
-            return try {
-                pm.getPackageInfo(SPEEDTRAP_PACKAGE, 0)
-                true
-            } catch (e: Exception) {
-                false
-            }
+            return SpeedTrapAutoLauncher.findSpeedTrapPackage(context) != null
         }
 
         /**
