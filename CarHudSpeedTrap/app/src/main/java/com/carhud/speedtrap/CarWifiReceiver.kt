@@ -91,8 +91,7 @@ class CarWifiReceiver : BroadcastReceiver() {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val activeNet = cm.activeNetwork ?: return false
             val caps = cm.getNetworkCapabilities(activeNet) ?: return false
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
-                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
         } else {
             @Suppress("DEPRECATION")
             val info = cm.activeNetworkInfo

@@ -57,13 +57,25 @@ class SpeedTrapListenerService : NotificationListenerService() {
         var onDebugInfoUpdated: (() -> Unit)? = null
 
         /**
+         * 檢查車機是否安裝了神盾測速照相
+         */
+        fun checkSpeedTrapInstalled(context: Context): Boolean {
+            val pm = context.packageManager
+            return try {
+                pm.getPackageInfo(SPEEDTRAP_PACKAGE, 0)
+                true
+            } catch (e: Exception) {
+                false
+            }
+        }
+
+        /**
          * 強制重新連線 NotificationListenerService
          */
         fun forceRebind(context: Context) {
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                     val comp = ComponentName(context, SpeedTrapListenerService::class.java)
-                    // 切換 Component 啟用狀態可強迫 Android 重新綁定 Listener
                     val pm = context.packageManager
                     pm.setComponentEnabledSetting(
                         comp,
@@ -87,6 +99,21 @@ class SpeedTrapListenerService : NotificationListenerService() {
         super.onListenerConnected()
         isConnected = true
         Log.i(TAG, "✓ NotificationListenerService 成功連線！")
+
+        // 服務啟動時同步啟用高頻 GPS 測速引擎
+        GpsSpeedManager.startListening(applicationContext)
+
+        // 核心亮點：立即掃描當前系統作用中通知（若神盾已在背景執行，立即解析無需等待新事件）
+        try {
+            activeNotifications?.forEach { sbn ->
+                if (sbn != null && isSpeedTrapPackage(sbn.packageName)) {
+                    processSpeedTrapNotification(sbn)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "讀取既有作用中通知失敗: ${e.message}")
+        }
+
         onDebugInfoUpdated?.invoke()
     }
 
@@ -103,23 +130,26 @@ class SpeedTrapListenerService : NotificationListenerService() {
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         super.onNotificationPosted(sbn)
         if (sbn == null) return
+        if (!isSpeedTrapPackage(sbn.packageName)) return
+        processSpeedTrapNotification(sbn)
+    }
 
-        val pkgName = sbn.packageName ?: ""
-
-        // 寬鬆判定：只要是神盾（包含大小寫、變體、locallife 等）即處理
-        val isSpeedTrapApp = pkgName.contains("speedtrap", ignoreCase = true) ||
+    private fun isSpeedTrapPackage(pkgName: String?): Boolean {
+        if (pkgName.isNullOrEmpty()) return false
+        return pkgName.contains("speedtrap", ignoreCase = true) ||
                 pkgName.contains("locallife", ignoreCase = true) ||
                 pkgName == SPEEDTRAP_PACKAGE
+    }
 
-        if (!isSpeedTrapApp) return
-
+    private fun processSpeedTrapNotification(sbn: StatusBarNotification) {
+        val pkgName = sbn.packageName ?: ""
         lastNotificationTimeMillis = System.currentTimeMillis()
 
         val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
         lastNotificationTime = timeFormat.format(Date())
         lastPackageName = pkgName
 
-        // 徹底解決 getString() 取出 null 的 bug：全部使用 getCharSequence()
+        // 提取所有通知文字 (CharSequence 防禦 null)
         val extras = sbn.notification.extras
         val contentBuilder = StringBuilder()
 
@@ -138,7 +168,7 @@ class SpeedTrapListenerService : NotificationListenerService() {
                 .append(infoText).append(" ")
                 .append(summaryText).append(" ")
 
-            // 遍歷所有 extras 欄位防禦特殊自訂 key
+            // 遍歷所有 extras 欄位防禦自訂 key
             for (key in extras.keySet()) {
                 val value = extras.get(key)
                 if (value is CharSequence && value.isNotEmpty()) {
@@ -155,41 +185,44 @@ class SpeedTrapListenerService : NotificationListenerService() {
         val rawContent = contentBuilder.toString().trim()
         lastRawText = if (rawContent.isNotEmpty()) rawContent else "(通知內文為空)"
 
-        val data = parseNotificationContent(rawContent)
-        latestData = data
+        val parsedData = parseNotificationContent(rawContent)
+
+        // 雙軌時速融合：若 GPS 原生已有車速且大於 0，優先保留高頻 GPS 車速；若 GPS 搜尋中則採用神盾解析時速
+        val effectiveSpeed = if (GpsSpeedManager.currentGpsSpeed > 0) {
+            GpsSpeedManager.currentGpsSpeed
+        } else if (parsedData.currentSpeed > 0) {
+            parsedData.currentSpeed
+        } else {
+            0
+        }
+
+        val finalData = parsedData.copy(currentSpeed = effectiveSpeed)
+        latestData = finalData
 
         // 1. 推送更新給 CarWebGuru AppWidget
         CarHudWidgetProvider.updateWidgetData(
             context = this,
-            speedLimit = data.speedLimit,
-            distMeters = data.distanceMeters,
-            currentSpeed = data.currentSpeed,
-            camType = data.camType
+            speedLimit = finalData.speedLimit,
+            distMeters = finalData.distanceMeters,
+            currentSpeed = finalData.currentSpeed,
+            camType = finalData.camType
         )
 
-        // 2. 觸發回呼
-        onDataUpdated?.invoke(data)
+        // 2. 觸發即時回呼
+        onDataUpdated?.invoke(finalData)
         onDebugInfoUpdated?.invoke()
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
         super.onNotificationRemoved(sbn)
         if (sbn == null) return
-
-        val pkgName = sbn.packageName ?: ""
-        val isSpeedTrapApp = pkgName.contains("speedtrap", ignoreCase = true) ||
-                pkgName.contains("locallife", ignoreCase = true)
-
-        if (!isSpeedTrapApp) return
+        if (!isSpeedTrapPackage(sbn.packageName)) return
 
         lastNotificationTimeMillis = System.currentTimeMillis()
 
         // 檢查神盾是否還有其他作用中的通知
         val hasActiveSpeedTrap = try {
-            activeNotifications?.any {
-                it.packageName.contains("speedtrap", ignoreCase = true) ||
-                        it.packageName.contains("locallife", ignoreCase = true)
-            } ?: false
+            activeNotifications?.any { isSpeedTrapPackage(it.packageName) } ?: false
         } catch (e: Exception) {
             false
         }
@@ -198,7 +231,7 @@ class SpeedTrapListenerService : NotificationListenerService() {
             val clearedData = SpeedTrapData(
                 speedLimit = if (latestData.speedLimit > 0) latestData.speedLimit else 60,
                 distanceMeters = 0,
-                currentSpeed = latestData.currentSpeed,
+                currentSpeed = if (GpsSpeedManager.currentGpsSpeed > 0) GpsSpeedManager.currentGpsSpeed else latestData.currentSpeed,
                 camType = "🟢 路況順暢"
             )
             latestData = clearedData
@@ -223,19 +256,25 @@ class SpeedTrapListenerService : NotificationListenerService() {
 
         try {
             // 匹配相機類型
-            if (content.contains("科技執法")) camType = "科技執法"
-            else if (content.contains("區間")) camType = "區間測速"
-            else if (content.contains("流動")) camType = "流動測速"
-            else if (content.contains("闖紅燈")) camType = "闖紅燈照相"
-            else if (content.contains("固定")) camType = "固定測速"
+            when {
+                content.contains("科技執法") -> camType = "科技執法"
+                content.contains("區間") -> camType = "區間測速"
+                content.contains("流動") -> camType = "流動測速"
+                content.contains("闖紅燈") -> camType = "闖紅燈照相"
+                content.contains("固定") -> camType = "固定測速"
+                content.contains("違規取締") -> camType = "違規取締"
+                content.contains("未禮讓") -> camType = "未禮讓行人"
+                content.contains("車距") -> camType = "未保持車距"
+                content.contains("高架") -> camType = "高架測速"
+            }
 
-            // 匹配限速 (支援: "限速 60", "速限:50", "限制時速 110", "限速60公里")
+            // 匹配限速 (支援: "限速 60", "速限:50", "限制時速 110", "限速60公里", "速限值: 60")
             val limitMatcher = Pattern.compile("(限速|速限|限制時速|速限值)\\s*[:：=]?\\s*(\\d+)").matcher(content)
             if (limitMatcher.find()) {
                 limit = limitMatcher.group(2)?.toIntOrNull() ?: 0
             }
 
-            // 匹配距離 (支援公里轉換與公尺: "1.2公里", "500公尺", "350m", "500 米")
+            // 匹配距離 (支援公里轉換與公尺: "1.2公里", "500公尺", "350m", "500 米", "距離: 300m")
             val kmMatcher = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*(公里|km)", Pattern.CASE_INSENSITIVE).matcher(content)
             if (kmMatcher.find()) {
                 val km = kmMatcher.group(1)?.toFloatOrNull() ?: 0f
@@ -247,8 +286,8 @@ class SpeedTrapListenerService : NotificationListenerService() {
                 }
             }
 
-            // 匹配目前車速 (支援: "時速 55", "速度 60", "目前: 70", "55 km/h")
-            val speedMatcher = Pattern.compile("(時速|速度|目前時速|目前速度|車速)\\s*[:：=]?\\s*(\\d+)").matcher(content)
+            // 匹配目前車速 (支援: "時速 55", "速度 60", "目前: 70", "55 km/h", "車速 80")
+            val speedMatcher = Pattern.compile("(時速|速度|目前時速|目前速度|車速|目前)\\s*[:：=]?\\s*(\\d+)").matcher(content)
             if (speedMatcher.find()) {
                 speed = speedMatcher.group(2)?.toIntOrNull() ?: 0
             } else {
@@ -259,7 +298,7 @@ class SpeedTrapListenerService : NotificationListenerService() {
             }
 
             // 若完全沒出現測速距離，但神盾在背景常駐
-            if (dist == 0 && (content.contains("背景") || content.contains("常駐") || content.contains("運行") || content.contains("定位"))) {
+            if (dist == 0 && (content.contains("背景") || content.contains("常駐") || content.contains("運行") || content.contains("定位") || content.contains("神盾"))) {
                 camType = "🟢 神盾監控中"
             }
         } catch (e: Exception) {

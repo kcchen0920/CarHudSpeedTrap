@@ -1,4 +1,4 @@
-param()
+﻿param()
 $ErrorActionPreference = "Stop"
 
 $scriptRoot = $PSScriptRoot
@@ -30,15 +30,18 @@ if (Test-Path -LiteralPath $apkOutput) {
     Write-Host "Build SUCCESS! Output: $targetApk" -ForegroundColor Green
 
     # 自動同步至 Google 雲端硬碟 (G:\我的雲端硬碟\車用 & D:\文件\car)
-    $cloudDirs = @("G:\我的雲端硬碟\車用", "D:\文件\car")
+    $cloudDirs = @(
+        (Join-Path "G:\" "我的雲端硬碟\車用"),
+        (Join-Path "D:\" "文件\car")
+    )
     foreach ($cDir in $cloudDirs) {
         try {
-            if (-not (Test-Path $cDir)) { 
+            if (-not (Test-Path -LiteralPath $cDir)) { 
                 New-Item -ItemType Directory -Path $cDir -Force -ErrorAction SilentlyContinue | Out-Null
             }
-            if (Test-Path $cDir) {
+            if (Test-Path -LiteralPath $cDir) {
                 $destFile = Join-Path $cDir "CarHud-debug.apk"
-                Copy-Item -Path $targetApk -Destination $destFile -Force
+                Copy-Item -LiteralPath $targetApk -Destination $destFile -Force
                 Write-Host "Synced to Cloud Drive: $destFile" -ForegroundColor Green
             }
         } catch {

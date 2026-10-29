@@ -6,6 +6,8 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.widget.Button
 import android.widget.TextView
@@ -13,36 +15,48 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 
 class MainActivity : AppCompatActivity() {
 
     private var isOverlayRunning = false
     private val PREF_NAME = "carhud_prefs"
     private val KEY_CUSTOM_AA_PKG = "custom_aa_pkg"
+    private val KEY_AUTO_START_HUD = "auto_start_hud"
+
+    private var simulatedSpeedIndex = 0
+    private val testSpeeds = intArrayOf(0, 35, 52, 68, 85, 0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
         val btnNotification = findViewById<Button>(R.id.btn_grant_notification)
+        val btnLocation = findViewById<Button>(R.id.btn_grant_location)
         val btnOverlay = findViewById<Button>(R.id.btn_grant_overlay)
+        val btnLaunchSpeedTrap = findViewById<Button>(R.id.btn_launch_speedtrap)
         val btnChooseAA = findViewById<Button>(R.id.btn_choose_aa_app)
         val tvCurrentAA = findViewById<TextView>(R.id.tv_current_aa_pkg)
         val btnToggleOverlay = findViewById<Button>(R.id.btn_toggle_overlay)
         val btnTestNormal = findViewById<Button>(R.id.btn_test_normal)
         val btnTestOverspeed = findViewById<Button>(R.id.btn_test_overspeed)
+        val btnTestGpsSpeed = findViewById<Button>(R.id.btn_test_gps_speed)
         val btnRebind = findViewById<Button>(R.id.btn_rebind_listener)
 
-        // 讀取目前綁定的 AA App
         updateCurrentAaLabel(tvCurrentAA)
 
-        // 1. 跳轉開啟通知監聽權限
+        // 1. 啟用通知存取權
         btnNotification.setOnClickListener {
             startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
             Toast.makeText(this, "請在清單中找到「車機神盾HUD」並開啟權限", Toast.LENGTH_LONG).show()
         }
 
-        // 2. 跳轉開啟懸浮窗權限
+        // 2. 啟用 GPS 定位權限
+        btnLocation.setOnClickListener {
+            requestLocationPermission()
+        }
+
+        // 3. 啟用懸浮窗權限
         btnOverlay.setOnClickListener {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 if (!Settings.canDrawOverlays(this)) {
@@ -57,19 +71,36 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 3. 強制重新連線 NotificationListener
+        // 4. 強制重新連線 NotificationListener
         btnRebind.setOnClickListener {
             SpeedTrapListenerService.forceRebind(this)
             Toast.makeText(this, "已發送強制重連指令！請確認狀態是否變綠燈", Toast.LENGTH_SHORT).show()
-            updateDiagnosticPanel()
+            Handler(Looper.getMainLooper()).postDelayed({ updateDiagnosticPanel() }, 1000)
         }
 
-        // 4. 選擇自訂 Android Auto 投屏 App
+        // 5. 立即啟動神盾 App
+        btnLaunchSpeedTrap.setOnClickListener {
+            if (SpeedTrapListenerService.checkSpeedTrapInstalled(this)) {
+                SpeedTrapAutoLauncher.startSpeedTrapIfNeeded(this, bringHomeToFront = false, forceLaunch = true)
+                Toast.makeText(this, "正在開啟神盾測速照相...", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this, "車機尚未安裝神盾測速照相，正跳轉至下載頁面...", Toast.LENGTH_LONG).show()
+                try {
+                    val marketIntent = Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=${SpeedTrapListenerService.SPEEDTRAP_PACKAGE}"))
+                    startActivity(marketIntent)
+                } catch (e: Exception) {
+                    val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=${SpeedTrapListenerService.SPEEDTRAP_PACKAGE}"))
+                    startActivity(webIntent)
+                }
+            }
+        }
+
+        // 6. 選擇自訂 Android Auto 投屏 App
         btnChooseAA.setOnClickListener {
             showAppPickerDialog(tvCurrentAA)
         }
 
-        // 5. 開關全域置頂橫條
+        // 7. 開關全域置頂橫條
         btnToggleOverlay.setOnClickListener {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
                 Toast.makeText(this, "請先取得懸浮窗權限！", Toast.LENGTH_SHORT).show()
@@ -78,17 +109,21 @@ class MainActivity : AppCompatActivity() {
 
             val overlayIntent = Intent(this, TopHudOverlayService::class.java)
             if (!isOverlayRunning) {
-                startService(overlayIntent)
-                btnToggleOverlay.text = "關閉全域置頂懸浮橫條"
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    ContextCompat.startForegroundService(this, overlayIntent)
+                } else {
+                    startService(overlayIntent)
+                }
+                btnToggleOverlay.text = "關閉全域置頂懸浮橫條 (HUD)"
                 isOverlayRunning = true
             } else {
                 stopService(overlayIntent)
-                btnToggleOverlay.text = "開啟全域置頂懸浮橫條 (選用)"
+                btnToggleOverlay.text = "開啟全域置頂懸浮橫條 (HUD)"
                 isOverlayRunning = false
             }
         }
 
-        // 6. 模擬測試數據
+        // 8. 模擬測試數據
         btnTestNormal.setOnClickListener {
             CarHudWidgetProvider.updateWidgetData(this, 60, 350, 54, "固定測速")
             Toast.makeText(this, "已推送正常數據：速限 60 / 車速 54 / 距 350m", Toast.LENGTH_SHORT).show()
@@ -96,37 +131,91 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnTestOverspeed.setOnClickListener {
-            CarHudWidgetProvider.updateWidgetData(this, 60, 180, 72, "⚠️ 超速！固定測速")
-            Toast.makeText(this, "已推送超速數據：速限 60 / 車速 72 / 距 180m", Toast.LENGTH_SHORT).show()
+            CarHudWidgetProvider.updateWidgetData(this, 60, 180, 76, "⚠️ 超速！固定測速")
+            Toast.makeText(this, "已推送超速數據：速限 60 / 車速 76 / 距 180m", Toast.LENGTH_SHORT).show()
             updateDiagnosticPanel()
         }
 
-        // 註冊即時診斷回呼
+        btnTestGpsSpeed.setOnClickListener {
+            simulatedSpeedIndex = (simulatedSpeedIndex + 1) % testSpeeds.size
+            val simSpeed = testSpeeds[simulatedSpeedIndex]
+            GpsSpeedManager.simulateSpeed(simSpeed)
+            Toast.makeText(this, "已模擬 GPS 時速跳動為: $simSpeed km/h", Toast.LENGTH_SHORT).show()
+            updateDiagnosticPanel()
+        }
+
+        // 註冊即時診斷與 GPS 回呼
         SpeedTrapListenerService.onDebugInfoUpdated = {
-            runOnUiThread {
-                updateDiagnosticPanel()
+            runOnUiThread { updateDiagnosticPanel() }
+        }
+
+        GpsSpeedManager.onGpsSpeedUpdated = { _, _ ->
+            runOnUiThread { updateDiagnosticPanel() }
+        }
+    }
+
+    private fun requestLocationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            requestPermissions(
+                arrayOf(
+                    android.Manifest.permission.ACCESS_FINE_LOCATION,
+                    android.Manifest.permission.ACCESS_COARSE_LOCATION
+                ), 1001
+            )
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 1001) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                Toast.makeText(this, "✓ GPS 定位權限授權成功！正在搜尋衛星...", Toast.LENGTH_SHORT).show()
+                GpsSpeedManager.startListening(this)
+            } else {
+                Toast.makeText(this, "未授予 GPS 權限，無法即時測速", Toast.LENGTH_SHORT).show()
             }
+            updateDiagnosticPanel()
         }
     }
 
     private fun updateDiagnosticPanel() {
         val tvStatus = findViewById<TextView>(R.id.tv_listener_status)
+        val tvSpeedTrapStatus = findViewById<TextView>(R.id.tv_speedtrap_status)
         val tvTime = findViewById<TextView>(R.id.tv_diag_time)
         val tvPkg = findViewById<TextView>(R.id.tv_diag_pkg)
         val tvRaw = findViewById<TextView>(R.id.tv_diag_raw)
         val tvParsed = findViewById<TextView>(R.id.tv_diag_parsed)
+        val tvGps = findViewById<TextView>(R.id.tv_diag_gps)
+        val tvGpsDetail = findViewById<TextView>(R.id.tv_diag_gps_detail)
 
         val isGranted = NotificationManagerCompat.getEnabledListenerPackages(this).contains(packageName)
 
         if (!isGranted) {
-            tvStatus.text = "● 監聽服務狀態: ❌ 尚未取得系統通知權限"
+            tvStatus.text = "● 監聽服務狀態: ❌ 尚未取得系統通知權限 (請按上方按鈕1)"
             tvStatus.setTextColor(0xFFEF4444.toInt())
         } else if (SpeedTrapListenerService.isConnected) {
             tvStatus.text = "● 監聽服務狀態: 🟢 已連線運作中 (Listening)"
             tvStatus.setTextColor(0xFF10B981.toInt())
         } else {
-            tvStatus.text = "● 監聽服務狀態: 🟡 權限已開但服務未連線 (請點右側強制重連)"
+            tvStatus.text = "● 監聽服務狀態: 🟡 權限已開但服務未連線 (請點強制重連)"
             tvStatus.setTextColor(0xFFF59E0B.toInt())
+        }
+
+        // 神盾 App 安裝偵測
+        val isSpeedTrapInstalled = SpeedTrapListenerService.checkSpeedTrapInstalled(this)
+        if (isSpeedTrapInstalled) {
+            val lastNotif = SpeedTrapListenerService.lastNotificationTimeMillis
+            val isRecentlyActive = lastNotif > 0 && (System.currentTimeMillis() - lastNotif) < 30000L
+            if (isRecentlyActive) {
+                tvSpeedTrapStatus.text = "● 神盾 App: 🟢 正在背景常駐運行中"
+                tvSpeedTrapStatus.setTextColor(0xFF10B981.toInt())
+            } else {
+                tvSpeedTrapStatus.text = "● 神盾 App: 🟡 已安裝 (尚未收到背景通知，可按右側啟動)"
+                tvSpeedTrapStatus.setTextColor(0xFFF59E0B.toInt())
+            }
+        } else {
+            tvSpeedTrapStatus.text = "● 神盾 App: ❌ 尚未安裝 (本工具需搭配神盾使用)"
+            tvSpeedTrapStatus.setTextColor(0xFFEF4444.toInt())
         }
 
         tvTime.text = "最後收到通知時間: ${SpeedTrapListenerService.lastNotificationTime}"
@@ -134,16 +223,18 @@ class MainActivity : AppCompatActivity() {
         tvRaw.text = "原始通知文字: ${SpeedTrapListenerService.lastRawText}"
 
         val cur = SpeedTrapListenerService.latestData
-        tvParsed.text = "解析結果: 速限 ${cur.speedLimit} | 距離 ${cur.distanceMeters}m | 車速 ${cur.currentSpeed} | ${cur.camType}"
+        val displaySpeed = if (GpsSpeedManager.currentGpsSpeed > 0) GpsSpeedManager.currentGpsSpeed else cur.currentSpeed
+        tvParsed.text = "解析結果: 速限 ${cur.speedLimit} | 距離 ${cur.distanceMeters}m | 車速 $displaySpeed | ${cur.camType}"
 
-        val tvGps = findViewById<TextView>(R.id.tv_diag_gps)
+        // GPS 車速與衛星狀態
         if (GpsSpeedManager.isGpsActive) {
-            tvGps.text = "車載 GPS 狀態: 🟢 已連線 (即時車速: ${GpsSpeedManager.currentGpsSpeed} km/h)"
+            tvGps.text = "車載 GPS 狀態: 🟢 定位連線中 (即時車速: ${GpsSpeedManager.currentGpsSpeed} km/h)"
             tvGps.setTextColor(0xFF38BDF8.toInt())
         } else {
-            tvGps.text = "車載 GPS 狀態: 🟡 搜尋衛星中 / 未定位 (將以神盾時速為備援)"
+            tvGps.text = "車載 GPS 狀態: 🟡 搜尋衛星中 (來源: ${GpsSpeedManager.lastSpeedSource})"
             tvGps.setTextColor(0xFFF59E0B.toInt())
         }
+        tvGpsDetail.text = "定位資訊: ${GpsSpeedManager.lastLocationDesc}"
     }
 
     private fun updateCurrentAaLabel(tv: TextView) {
@@ -157,7 +248,7 @@ class MainActivity : AppCompatActivity() {
                 return
             } catch (e: Exception) {}
         }
-        tv.text = "目前綁定：自動智慧識別 (ZLINK / AutoKit / 投屏)"
+        tv.text = "目前綁定：自動智慧偵測 (ZLINK / AutoKit / 投屏)"
     }
 
     private fun showAppPickerDialog(tv: TextView) {
@@ -196,27 +287,44 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         checkPermissions()
         updateDiagnosticPanel()
+
+        // 啟動 GPS 監聽
         GpsSpeedManager.startListening(this)
+
+        // 若已獲取通知存取權但尚未連線，自動嘗試 forceRebind
+        val hasNotification = NotificationManagerCompat.getEnabledListenerPackages(this).contains(packageName)
+        if (hasNotification && !SpeedTrapListenerService.isConnected) {
+            SpeedTrapListenerService.forceRebind(this)
+        }
     }
 
     private fun checkPermissions() {
-        val hasNotification = NotificationManagerCompat.getEnabledListenerPackages(this).contains(packageName)
         val btnNotification = findViewById<Button>(R.id.btn_grant_notification)
+        val hasNotification = NotificationManagerCompat.getEnabledListenerPackages(this).contains(packageName)
         if (hasNotification) {
-            btnNotification.text = "✓ 通知存取權已啟用 (監聽中)"
+            btnNotification.text = "✓ 1. 通知存取權已啟用 (監聽中)"
+            btnNotification.setTextColor(0xFF10B981.toInt())
             btnNotification.isEnabled = false
         }
 
-        // 自動請求 GPS 權限以啟用即時車速
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(
-                    arrayOf(
-                        android.Manifest.permission.ACCESS_FINE_LOCATION,
-                        android.Manifest.permission.ACCESS_COARSE_LOCATION
-                    ), 1001
-                )
-            }
+        val btnLocation = findViewById<Button>(R.id.btn_grant_location)
+        val hasLocation = ContextCompat.checkSelfPermission(
+            this,
+            android.Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        if (hasLocation) {
+            btnLocation.text = "✓ 2. GPS 定位權限已啟用"
+            btnLocation.setTextColor(0xFF10B981.toInt())
+            btnLocation.isEnabled = false
+        } else {
+            requestLocationPermission()
+        }
+
+        val btnOverlay = findViewById<Button>(R.id.btn_grant_overlay)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && Settings.canDrawOverlays(this)) {
+            btnOverlay.text = "✓ 3. 懸浮窗權限已啟用"
+            btnOverlay.setTextColor(0xFF10B981.toInt())
+            btnOverlay.isEnabled = false
         }
     }
 }

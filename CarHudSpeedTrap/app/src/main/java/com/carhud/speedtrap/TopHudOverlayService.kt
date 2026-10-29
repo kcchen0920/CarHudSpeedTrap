@@ -27,6 +27,8 @@ class TopHudOverlayService : Service() {
         super.onCreate()
         startForegroundNotification()
         initOverlay()
+        // 核心：懸浮條常駐服務啟動時，立即啟動高精度 GPS 測速引擎
+        GpsSpeedManager.startListening(this)
     }
 
     private fun startForegroundNotification() {

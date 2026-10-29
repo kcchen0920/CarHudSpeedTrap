@@ -127,11 +127,15 @@ class CarHudWidgetProvider : AppWidgetProvider() {
         // 每次桌面刷新時確保神盾在運行
         SpeedTrapAutoLauncher.startSpeedTrapIfNeeded(context, bringHomeToFront = true)
 
-        for (appWidgetId in appWidgetIds) {
-            val views = RemoteViews(context.packageName, R.layout.widget_top_hud)
-            bindClickIntents(context, views)
-            appWidgetManager.updateAppWidget(appWidgetId, views)
-        }
+        val cur = SpeedTrapListenerService.latestData
+        val speed = if (GpsSpeedManager.currentGpsSpeed > 0) GpsSpeedManager.currentGpsSpeed else cur.currentSpeed
+        updateWidgetData(
+            context = context,
+            speedLimit = cur.speedLimit,
+            distMeters = cur.distanceMeters,
+            currentSpeed = speed,
+            camType = cur.camType
+        )
     }
 
     override fun onReceive(context: Context, intent: Intent) {

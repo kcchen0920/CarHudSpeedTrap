@@ -17,17 +17,18 @@ object SpeedTrapAutoLauncher {
     /**
      * 檢查並自動喚醒神盾 App
      * @param bringHomeToFront 啟動後是否將畫面切回桌面 (避免神盾大視窗蓋住車機介面)
+     * @param forceLaunch 是否強制啟動 (忽略背景心跳檢測)
      */
-    fun startSpeedTrapIfNeeded(context: Context, bringHomeToFront: Boolean = true) {
+    fun startSpeedTrapIfNeeded(context: Context, bringHomeToFront: Boolean = true, forceLaunch: Boolean = false) {
         val now = System.currentTimeMillis()
-        // 避免 10 秒內重複喚醒
-        if (now - lastLaunchAttemptTime < 10000L) {
-            return
-        }
-
-        if (isSpeedTrapRunning(context)) {
-            Log.d(TAG, "神盾已在背景運行中，無需重複喚醒")
-            return
+        if (!forceLaunch) {
+            if (now - lastLaunchAttemptTime < 8000L) {
+                return
+            }
+            if (isSpeedTrapRunning(context)) {
+                Log.d(TAG, "神盾已在背景運行中，無需重複喚醒")
+                return
+            }
         }
 
         lastLaunchAttemptTime = now
