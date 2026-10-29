@@ -135,16 +135,34 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 8. 模擬測試數據
+        // 8. 模擬測試數據 (支援即時連動 Widget 與 HUD 懸浮條)
         btnTestNormal.setOnClickListener {
-            CarHudWidgetProvider.updateWidgetData(this, 60, 350, 54, "固定測速")
-            Toast.makeText(this, "已推送正常數據：速限 60 / 車速 54 / 距 350m", Toast.LENGTH_SHORT).show()
+            val testData = SpeedTrapData(
+                speedLimit = 50,
+                distanceMeters = 350,
+                currentSpeed = 48,
+                camType = "固定測速",
+                rawText = "前方 350 公尺 固定測速照相 限速 50"
+            )
+            SpeedTrapListenerService.latestData = testData
+            CarHudWidgetProvider.updateWidgetData(this, 50, 350, 48, "固定測速")
+            SpeedTrapListenerService.onDataUpdated?.invoke(testData)
+            Toast.makeText(this, "已推送正常數據：速限 50 / 車速 48 / 距 350m", Toast.LENGTH_SHORT).show()
             updateDiagnosticPanel()
         }
 
         btnTestOverspeed.setOnClickListener {
-            CarHudWidgetProvider.updateWidgetData(this, 60, 180, 76, "⚠️ 超速！固定測速")
-            Toast.makeText(this, "已推送超速數據：速限 60 / 車速 76 / 距 180m", Toast.LENGTH_SHORT).show()
+            val testData = SpeedTrapData(
+                speedLimit = 50,
+                distanceMeters = 180,
+                currentSpeed = 68,
+                camType = "⚠️ 超速！固定測速",
+                rawText = "前方 180 公尺 固定測速照相 限速 50 超速"
+            )
+            SpeedTrapListenerService.latestData = testData
+            CarHudWidgetProvider.updateWidgetData(this, 50, 180, 68, "⚠️ 超速！固定測速")
+            SpeedTrapListenerService.onDataUpdated?.invoke(testData)
+            Toast.makeText(this, "已推送超速數據：速限 50 / 車速 68 / 距 180m", Toast.LENGTH_SHORT).show()
             updateDiagnosticPanel()
         }
 
@@ -236,7 +254,8 @@ class MainActivity : AppCompatActivity() {
 
         val cur = SpeedTrapListenerService.latestData
         val displaySpeed = if (GpsSpeedManager.currentGpsSpeed > 0) GpsSpeedManager.currentGpsSpeed else cur.currentSpeed
-        tvParsed.text = "解析結果: 速限 ${cur.speedLimit} | 距離 ${cur.distanceMeters}m | 車速 $displaySpeed | ${cur.camType}"
+        val displayLimit = if (cur.speedLimit > 0) "${cur.speedLimit}" else "--"
+        tvParsed.text = "解析結果: 速限 $displayLimit | 距離 ${cur.distanceMeters}m | 車速 $displaySpeed | ${cur.camType}"
 
         // GPS 車速與衛星狀態
         if (GpsSpeedManager.isGpsActive) {

@@ -70,7 +70,7 @@ class CarHudWidgetProvider : AppWidgetProvider() {
             }
 
             // 更新相機文字與倒數距離
-            val camText = if (distMeters > 0) "📷 $camType ${distMeters}m" else "🟢 路況順暢"
+            val camText = if (distMeters > 0) "📷 $camType ${distMeters}m" else (if (camType.isNotEmpty()) camType else "🟢 路況順暢")
             remoteViews.setTextViewText(R.id.tv_cam_info, camText)
             remoteViews.setTextColor(R.id.tv_cam_info, camTextColor)
 

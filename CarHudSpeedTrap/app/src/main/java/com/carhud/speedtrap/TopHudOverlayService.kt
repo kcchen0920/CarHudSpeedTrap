@@ -141,7 +141,7 @@ class TopHudOverlayService : Service() {
                     tvSpeed?.setTextColor(0xFFFFFFFF.toInt())
                     tvCam?.setTextColor(0xFF10B981.toInt())
                     overlayView?.setBackgroundResource(R.drawable.bg_hud_top_bar)
-                    tvCam?.text = "🟢 路況順暢"
+                    tvCam?.text = if (data.camType.isNotEmpty()) data.camType else "🟢 路況順暢"
                 }
             }
         }

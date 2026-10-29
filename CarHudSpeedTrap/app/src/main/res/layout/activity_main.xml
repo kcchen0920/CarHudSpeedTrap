@@ -177,7 +177,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
-                android:text="解析結果: 速限 60 | 距離 0m | 車速 0"
+                android:text="解析結果: 速限 -- | 距離 0m | 車速 0"
                 android:textColor="#10B981"
                 android:textSize="13sp"
                 android:textStyle="bold" />
