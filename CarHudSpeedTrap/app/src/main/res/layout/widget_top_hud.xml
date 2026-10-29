@@ -69,11 +69,11 @@
         android:textColor="@color/text_gray"
         android:textSize="10sp" />
 
-    <!-- 4. 快速連線切換群組 -->
+    <!-- 4. 快速連線與控制群組 -->
     <LinearLayout
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginStart="14dp"
+        android:layout_marginStart="10dp"
         android:gravity="center_vertical"
         android:orientation="horizontal">
 
@@ -84,8 +84,8 @@
             android:layout_height="32dp"
             android:background="@drawable/bg_btn_aa"
             android:gravity="center"
-            android:paddingStart="10dp"
-            android:paddingEnd="10dp"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
             android:text="🚗 AA"
             android:textColor="@color/accent_blue"
             android:textSize="12sp"
@@ -96,13 +96,28 @@
             android:id="@+id/btn_toggle_wifi"
             android:layout_width="wrap_content"
             android:layout_height="32dp"
-            android:layout_marginStart="6dp"
+            android:layout_marginStart="5dp"
             android:background="@drawable/bg_btn_wifi"
             android:gravity="center"
-            android:paddingStart="10dp"
-            android:paddingEnd="10dp"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
             android:text="📶 Wi-Fi"
             android:textColor="@color/accent_green"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <!-- 快速關閉按鈕 (點擊立即關閉懸浮條，長按結束程式) -->
+        <TextView
+            android:id="@+id/btn_close_hud"
+            android:layout_width="wrap_content"
+            android:layout_height="32dp"
+            android:layout_marginStart="5dp"
+            android:background="@drawable/bg_btn_close"
+            android:gravity="center"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:text="✕ 關閉"
+            android:textColor="#EF4444"
             android:textSize="12sp"
             android:textStyle="bold" />
     </LinearLayout>

@@ -3,6 +3,7 @@ package com.carhud.speedtrap
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -174,6 +175,54 @@ class MainActivity : AppCompatActivity() {
             updateDiagnosticPanel()
         }
 
+        // 9. HUD 透明度切換 (防遮蔽前台地圖/導航 App)
+        val tvHudAlphaLabel = findViewById<TextView>(R.id.tv_hud_alpha_label)
+        val btnAlphaExtreme = findViewById<Button>(R.id.btn_alpha_extreme)
+        val btnAlphaHigh = findViewById<Button>(R.id.btn_alpha_high)
+        val btnAlphaStandard = findViewById<Button>(R.id.btn_alpha_standard)
+        val btnExitApp = findViewById<Button>(R.id.btn_exit_app)
+
+        val prefs = getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        fun updateAlphaUi(alpha: Float) {
+            val percent = (alpha * 100).toInt()
+            tvHudAlphaLabel.text = "HUD 懸浮條透明度（防遮擋前台 App）：目前為 ${(100 - percent)}% 透明 (不透明度 $percent%)"
+            btnAlphaExtreme.backgroundTintList = ColorStateList.valueOf(if (alpha <= 0.55f) 0xFF0284C7.toInt() else 0xFF1E293B.toInt())
+            btnAlphaHigh.backgroundTintList = ColorStateList.valueOf(if (alpha in 0.56f..0.78f) 0xFF0284C7.toInt() else 0xFF1E293B.toInt())
+            btnAlphaStandard.backgroundTintList = ColorStateList.valueOf(if (alpha > 0.78f) 0xFF0284C7.toInt() else 0xFF1E293B.toInt())
+        }
+
+        val curAlpha = prefs.getFloat(TopHudOverlayService.PREF_HUD_ALPHA, TopHudOverlayService.DEFAULT_HUD_ALPHA)
+        updateAlphaUi(curAlpha)
+
+        btnAlphaExtreme.setOnClickListener {
+            prefs.edit().putFloat(TopHudOverlayService.PREF_HUD_ALPHA, 0.50f).apply()
+            TopHudOverlayService.updateAlpha(0.50f)
+            updateAlphaUi(0.50f)
+            Toast.makeText(this, "已切換為極度通透模式 (50%)", Toast.LENGTH_SHORT).show()
+        }
+
+        btnAlphaHigh.setOnClickListener {
+            prefs.edit().putFloat(TopHudOverlayService.PREF_HUD_ALPHA, 0.72f).apply()
+            TopHudOverlayService.updateAlpha(0.72f)
+            updateAlphaUi(0.72f)
+            Toast.makeText(this, "已切換為高透模式 (72%)", Toast.LENGTH_SHORT).show()
+        }
+
+        btnAlphaStandard.setOnClickListener {
+            prefs.edit().putFloat(TopHudOverlayService.PREF_HUD_ALPHA, 0.88f).apply()
+            TopHudOverlayService.updateAlpha(0.88f)
+            updateAlphaUi(0.88f)
+            Toast.makeText(this, "已切換為標準透光模式 (88%)", Toast.LENGTH_SHORT).show()
+        }
+
+        // 10. 徹底關閉並退出本程式
+        btnExitApp.setOnClickListener {
+            stopService(Intent(this, TopHudOverlayService::class.java))
+            GpsSpeedManager.stopListening()
+            Toast.makeText(this, "正在徹底退出 CarHud 測速整合...", Toast.LENGTH_SHORT).show()
+            finishAffinity()
+        }
+
         // 註冊即時診斷與 GPS 回呼
         SpeedTrapListenerService.onDebugInfoUpdated = {
             runOnUiThread { updateDiagnosticPanel() }
@@ -316,6 +365,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        isOverlayRunning = TopHudOverlayService.isRunning
+        val btnToggleOverlay = findViewById<Button?>(R.id.btn_toggle_overlay)
+        btnToggleOverlay?.text = if (TopHudOverlayService.isRunning) "關閉全域置頂懸浮橫條 (HUD)" else "開啟全域置頂懸浮橫條 (HUD)"
         checkPermissions()
         updateDiagnosticPanel()
         updateSpeedTrapLabel(findViewById(R.id.tv_current_speedtrap_pkg))

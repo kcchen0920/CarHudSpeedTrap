@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="bg_dark_card">#DE0F172A</color>
-    <color name="bg_dark_border">#3300D2FF</color>
+    <!-- 高通透懸浮深色毛玻璃背景 (約 44% 不透明度，防止遮蔽底層前台導航/地圖) -->
+    <color name="bg_dark_card">#700F172A</color>
+    <color name="bg_dark_border">#2E00D2FF</color>
     <color name="accent_blue">#00D2FF</color>
     <color name="accent_cyan">#00F2FE</color>
     <color name="accent_green">#10B981</color>

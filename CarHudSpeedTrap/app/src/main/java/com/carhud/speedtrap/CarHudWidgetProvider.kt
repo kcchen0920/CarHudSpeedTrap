@@ -8,11 +8,14 @@ import android.content.Context
 import android.content.Intent
 import android.widget.RemoteViews
 
+import android.widget.Toast
+
 class CarHudWidgetProvider : AppWidgetProvider() {
 
     companion object {
         const val ACTION_LAUNCH_AA = "com.carhud.speedtrap.ACTION_LAUNCH_AA"
         const val ACTION_TOGGLE_WIFI = "com.carhud.speedtrap.ACTION_TOGGLE_WIFI"
+        const val ACTION_CLOSE_HUD = "com.carhud.speedtrap.ACTION_CLOSE_HUD"
 
         /**
          * 供外部 Service 更新 Widget 內容
@@ -108,6 +111,15 @@ class CarHudWidgetProvider : AppWidgetProvider() {
                 context, 102, wifiIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             views.setOnClickPendingIntent(R.id.btn_toggle_wifi, wifiPending)
+
+            // 點擊關閉按鈕
+            val closeIntent = Intent(context, CarHudWidgetProvider::class.java).apply {
+                action = ACTION_CLOSE_HUD
+            }
+            val closePending = PendingIntent.getBroadcast(
+                context, 103, closeIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            views.setOnClickPendingIntent(R.id.btn_close_hud, closePending)
         }
     }
 
@@ -147,6 +159,11 @@ class CarHudWidgetProvider : AppWidgetProvider() {
             }
             ACTION_LAUNCH_AA -> QuickSwitchHelper.launchAndroidAuto(context)
             ACTION_TOGGLE_WIFI -> QuickSwitchHelper.toggleWifi(context)
+            ACTION_CLOSE_HUD -> {
+                val overlayIntent = Intent(context, TopHudOverlayService::class.java)
+                context.stopService(overlayIntent)
+                Toast.makeText(context, "已關閉置頂 HUD 橫條", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 }

@@ -285,6 +285,52 @@
             android:text="開啟全域置頂懸浮橫條 (HUD)"
             android:textColor="#FFFFFF" />
 
+        <!-- HUD 透明度調節 (防止遮蔽底層前台導航/地圖) -->
+        <TextView
+            android:id="@+id/tv_hud_alpha_label"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="HUD 懸浮條透明度（防遮擋前台 App）：目前為高透 (72%)"
+            android:textColor="#38BDF8"
+            android:textSize="12sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btn_alpha_extreme"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:backgroundTint="#1E293B"
+                android:text="極度通透 (50%)"
+                android:textSize="11sp" />
+
+            <Button
+                android:id="@+id/btn_alpha_high"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_marginStart="6dp"
+                android:layout_weight="1"
+                android:backgroundTint="#0284C7"
+                android:text="高透 (72%)"
+                android:textSize="11sp" />
+
+            <Button
+                android:id="@+id/btn_alpha_standard"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_marginStart="6dp"
+                android:layout_weight="1"
+                android:backgroundTint="#1E293B"
+                android:text="標準 (88%)"
+                android:textSize="11sp" />
+        </LinearLayout>
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -354,6 +400,25 @@
             android:backgroundTint="#1E293B"
             android:text="選擇車機上的 Android Auto / 投屏 App"
             android:textColor="#38BDF8" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="16dp"
+            android:layout_marginBottom="16dp"
+            android:background="#22FFFFFF" />
+
+        <!-- 退出與關閉程式 -->
+        <Button
+            android:id="@+id/btn_exit_app"
+            android:layout_width="match_parent"
+            android:layout_height="50dp"
+            android:layout_marginBottom="16dp"
+            android:backgroundTint="#BE123C"
+            android:text="❌ 徹底關閉並退出本程式 (Exit App)"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp"
+            android:textStyle="bold" />
 
     </LinearLayout>
 </ScrollView>

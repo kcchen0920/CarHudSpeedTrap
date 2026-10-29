@@ -14,17 +14,42 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.ProgressBar
 import android.widget.TextView
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 
 class TopHudOverlayService : Service() {
 
+    companion object {
+        const val PREF_HUD_ALPHA = "hud_alpha"
+        const val DEFAULT_HUD_ALPHA = 0.72f // 預設高透光度 72%，徹底解決遮蔽前台 App 問題
+
+        var isRunning: Boolean = false
+        var currentService: TopHudOverlayService? = null
+
+        fun updateAlpha(alpha: Float) {
+            currentService?.apply {
+                overlayParams?.alpha = alpha
+                if (overlayView != null && overlayParams != null && windowManager != null) {
+                    try {
+                        windowManager?.updateViewLayout(overlayView, overlayParams)
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
+            }
+        }
+    }
+
     private var windowManager: WindowManager? = null
     private var overlayView: View? = null
+    private var overlayParams: WindowManager.LayoutParams? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
+        isRunning = true
+        currentService = this
         startForegroundNotification()
         initOverlay()
         // 核心：懸浮條常駐服務啟動時，立即啟動高精度 GPS 測速引擎
@@ -71,6 +96,9 @@ class TopHudOverlayService : Service() {
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
+        val prefs = getSharedPreferences("carhud_prefs", Context.MODE_PRIVATE)
+        val hudAlpha = prefs.getFloat(PREF_HUD_ALPHA, DEFAULT_HUD_ALPHA)
+
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             (52 * resources.displayMetrics.density).toInt(),
@@ -83,7 +111,9 @@ class TopHudOverlayService : Service() {
             gravity = Gravity.TOP or Gravity.START
             x = 0
             y = 0
+            alpha = hudAlpha // 透光度設定，保證底層前台應用（導航/地圖等）清晰透視可見
         }
+        overlayParams = params
 
         // 綁定點擊事件
         overlayView?.findViewById<View>(R.id.btn_launch_aa)?.setOnClickListener {
@@ -91,6 +121,18 @@ class TopHudOverlayService : Service() {
         }
         overlayView?.findViewById<View>(R.id.btn_toggle_wifi)?.setOnClickListener {
             QuickSwitchHelper.toggleWifi(this)
+        }
+        // 關閉按鈕：短按立即關閉懸浮條 (避免遮蔽前台 App)；長按徹底結束本程式
+        overlayView?.findViewById<View>(R.id.btn_close_hud)?.setOnClickListener {
+            Toast.makeText(this, "已關閉全域置頂 HUD", Toast.LENGTH_SHORT).show()
+            stopSelf()
+        }
+        overlayView?.findViewById<View>(R.id.btn_close_hud)?.setOnLongClickListener {
+            Toast.makeText(this, "正在徹底退出 CarHud 程式...", Toast.LENGTH_SHORT).show()
+            GpsSpeedManager.stopListening()
+            stopSelf()
+            android.os.Process.killProcess(android.os.Process.myPid())
+            true
         }
 
         windowManager?.addView(overlayView, params)
@@ -149,10 +191,13 @@ class TopHudOverlayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        isRunning = false
+        currentService = null
         SpeedTrapListenerService.onDataUpdated = null
         if (overlayView != null) {
             windowManager?.removeView(overlayView)
             overlayView = null
         }
+        overlayParams = null
     }
 }
