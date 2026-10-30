@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.widget.Toast
 
@@ -15,6 +16,11 @@ object SpeedTrapAutoLauncher {
     private const val TAG = "SpeedTrapAutoLauncher"
     private const val PREF_NAME = "carhud_prefs"
     const val KEY_CUSTOM_SPEEDTRAP_PKG = "custom_speedtrap_pkg"
+    private const val KEY_LAST_LAUNCH_ELAPSED = "last_speedtrap_launch_elapsed"
+    private const val KEY_LAST_LAUNCH_WALL_TIME = "last_speedtrap_launch_wall_time"
+
+    // 自動喚醒冷卻時間：120 秒，徹底杜絕開機或連線時多個事件重複喚醒導致神盾異常報錯
+    private const val AUTO_LAUNCH_COOLDOWN_MS = 120_000L
 
     private val KNOWN_SPEEDTRAP_PKGS = listOf(
         "com.locallife.speedtrap",
@@ -71,21 +77,48 @@ object SpeedTrapAutoLauncher {
     /**
      * 檢查並自動喚醒神盾 App
      * @param bringHomeToFront 啟動後是否將畫面切回桌面 (避免神盾大視窗蓋住車機介面)
-     * @param forceLaunch 是否強制啟動 (忽略背景心跳檢測)
+     * @param forceLaunch 是否強制啟動 (忽略背景心跳檢測與防抖冷卻)
      */
+    @Synchronized
     fun startSpeedTrapIfNeeded(context: Context, bringHomeToFront: Boolean = true, forceLaunch: Boolean = false) {
         val now = System.currentTimeMillis()
+        val nowElapsed = SystemClock.elapsedRealtime()
+        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+
         if (!forceLaunch) {
-            if (now - lastLaunchAttemptTime < 8000L) {
+            // 1. 若神盾已在背景正常運行（監聽器有收到心跳或作用中通知），絕不重複喚醒
+            if (SpeedTrapListenerService.isSpeedTrapActive(context)) {
+                Log.d(TAG, "神盾已在背景運行中 (通知活躍/心跳正常)，無需喚醒")
                 return
             }
-            if (isSpeedTrapRunning(context)) {
-                Log.d(TAG, "神盾已在背景運行中，無需重複喚醒")
+
+            // 2. 記憶體防抖防禦：冷卻期內不重複觸發
+            if (now - lastLaunchAttemptTime < AUTO_LAUNCH_COOLDOWN_MS) {
+                Log.d(TAG, "神盾剛嘗試啟動過 (記憶體冷卻中)，略過重複呼叫")
+                return
+            }
+
+            // 3. SharedPreferences 跨處理序/跨接收器防抖防禦 (SystemClock 防止系統時間跳變)
+            val lastElapsed = prefs.getLong(KEY_LAST_LAUNCH_ELAPSED, 0L)
+            if (lastElapsed > 0 && (nowElapsed - lastElapsed) in 0 until AUTO_LAUNCH_COOLDOWN_MS) {
+                val remainingSec = (AUTO_LAUNCH_COOLDOWN_MS - (nowElapsed - lastElapsed)) / 1000
+                Log.d(TAG, "神盾啟動冷卻中 (剩餘 ${remainingSec} 秒)，略過重複喚醒")
+                return
+            }
+
+            // 4. 進程備用檢測
+            if (isSpeedTrapProcessRunning(context)) {
+                Log.d(TAG, "神盾進程已存在，無需重複叫起")
                 return
             }
         }
 
         lastLaunchAttemptTime = now
+        prefs.edit()
+            .putLong(KEY_LAST_LAUNCH_ELAPSED, nowElapsed)
+            .putLong(KEY_LAST_LAUNCH_WALL_TIME, now)
+            .apply()
+
         val targetPkg = findSpeedTrapPackage(context)
 
         if (targetPkg == null) {
@@ -98,13 +131,21 @@ object SpeedTrapAutoLauncher {
         val launchIntent = pm.getLaunchIntentForPackage(targetPkg)
 
         if (launchIntent != null) {
+            // 核心修正：使用 NEW_TASK 與 SINGLE_TOP，嚴禁使用 RESET_TASK_IF_NEEDED
+            // RESET_TASK_IF_NEEDED 會強制重設神盾 Task Stack 導致 Activity 重複開啟與崩潰彈窗
             launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            launchIntent.addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
-            context.startActivity(launchIntent)
-            Log.d(TAG, "已自動喚醒神盾測速 App ($targetPkg)")
-            Toast.makeText(context, "正在啟動神盾測速照相...", Toast.LENGTH_SHORT).show()
+            launchIntent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            
+            try {
+                context.startActivity(launchIntent)
+                Log.i(TAG, "已平順喚醒神盾測速 App ($targetPkg)")
+                Toast.makeText(context, "正在啟動神盾測速照相...", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Log.e(TAG, "啟動神盾失敗: ${e.message}")
+                return
+            }
 
-            // 延遲 1.2 秒將畫面壓回 CarWebGuru 桌面 (保持背景常駐而不搶焦點)
+            // 延遲 2.8 秒待神盾完成冷啟動初始化後，再將畫面平順壓回桌面 (避免過快打斷導致生命週期異常)
             if (bringHomeToFront) {
                 Handler(Looper.getMainLooper()).postDelayed({
                     val homeIntent = Intent(Intent.ACTION_MAIN).apply {
@@ -113,30 +154,28 @@ object SpeedTrapAutoLauncher {
                     }
                     try {
                         context.startActivity(homeIntent)
+                        Log.d(TAG, "已將主畫面切回桌面，神盾持續在背景常駐監控")
                     } catch (e: Exception) {
                         e.printStackTrace()
                     }
-                }, 1200)
+                }, 2800L)
             }
         }
     }
 
-    private fun isSpeedTrapRunning(context: Context): Boolean {
-        // 1. 優先檢查通知心跳：若 25 秒內曾收到神盾廣播，代表百分之百正在背景運行
-        val lastNotif = SpeedTrapListenerService.lastNotificationTimeMillis
-        if (lastNotif > 0 && (System.currentTimeMillis() - lastNotif) < 25000L) {
-            return true
-        }
-
-        // 2. 備用進程檢查
-        val targetPkg = findSpeedTrapPackage(context) ?: DEFAULT_SPEEDTRAP_PKG
-        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        val runningProcesses = am.runningAppProcesses ?: return false
-        for (process in runningProcesses) {
-            if (process.processName == targetPkg) {
-                return true
+    private fun isSpeedTrapProcessRunning(context: Context): Boolean {
+        return try {
+            val targetPkg = findSpeedTrapPackage(context) ?: DEFAULT_SPEEDTRAP_PKG
+            val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            val runningProcesses = am.runningAppProcesses ?: return false
+            for (process in runningProcesses) {
+                if (process.processName == targetPkg) {
+                    return true
+                }
             }
+            false
+        } catch (e: Exception) {
+            false
         }
-        return false
     }
 }

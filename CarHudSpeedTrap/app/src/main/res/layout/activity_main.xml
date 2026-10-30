@@ -66,7 +66,7 @@
             android:layout_height="48dp"
             android:layout_marginTop="8dp"
             android:backgroundTint="#1E293B"
-            android:text="3. 啟用「懸浮窗權限」(全域置頂橫條)"
+            android:text="3. 啟用「懸浮窗權限」(右上角置頂懸浮球)"
             android:textColor="#38BDF8" />
 
         <View
@@ -282,7 +282,7 @@
             android:layout_height="48dp"
             android:layout_marginTop="10dp"
             android:backgroundTint="#0284C7"
-            android:text="開啟全域置頂懸浮橫條 (HUD)"
+            android:text="開啟全域置頂 HUD 懸浮球 (右上角)"
             android:textColor="#FFFFFF" />
 
         <!-- HUD 透明度調節 (防止遮蔽底層前台導航/地圖) -->
@@ -291,7 +291,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:text="HUD 懸浮條透明度（防遮擋前台 App）：目前為高透 (72%)"
+            android:text="HUD 懸浮球透明度（防遮擋前台 App）：目前為高透 (72%)"
             android:textColor="#38BDF8"
             android:textSize="12sp" />
 

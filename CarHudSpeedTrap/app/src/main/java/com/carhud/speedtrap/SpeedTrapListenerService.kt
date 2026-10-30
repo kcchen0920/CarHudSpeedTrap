@@ -52,9 +52,41 @@ class SpeedTrapListenerService : NotificationListenerService() {
             camType = "🟢 服務就緒，等待測速訊號"
         )
 
+        // 保存當前連線中的 Listener 實例
+        var currentInstance: SpeedTrapListenerService? = null
+
         // 供 Activity / Overlay 註冊回呼
         var onDataUpdated: ((SpeedTrapData) -> Unit)? = null
         var onDebugInfoUpdated: (() -> Unit)? = null
+
+        /**
+         * 判定神盾是否已在運行中（多維度檢查：5分鐘內通知心跳、作用中常駐狀態列通知）
+         */
+        fun isSpeedTrapActive(context: Context): Boolean {
+            val now = System.currentTimeMillis()
+            // 1. 若 5 分鐘內曾收到神盾通知，判定為背景運行中
+            if (lastNotificationTimeMillis > 0 && (now - lastNotificationTimeMillis) < 300_000L) {
+                return true
+            }
+
+            // 2. 檢查作用中狀態列通知
+            val instance = currentInstance
+            if (isConnected && instance != null) {
+                try {
+                    val active = instance.activeNotifications
+                    if (active != null) {
+                        for (sbn in active) {
+                            if (sbn != null && instance.isSpeedTrapPackage(sbn.packageName)) {
+                                return true
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "檢查作用中通知失敗: ${e.message}")
+                }
+            }
+            return false
+        }
 
         /**
          * 檢查車機是否安裝了神盾測速照相 (支援模糊比對與自訂綁定)
@@ -92,6 +124,7 @@ class SpeedTrapListenerService : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
         isConnected = true
+        currentInstance = this
         Log.i(TAG, "✓ NotificationListenerService 成功連線！")
 
         // 服務啟動時同步啟用高頻 GPS 測速引擎
@@ -114,6 +147,7 @@ class SpeedTrapListenerService : NotificationListenerService() {
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
         isConnected = false
+        currentInstance = null
         Log.w(TAG, "⚠ NotificationListenerService 已斷線！")
         onDebugInfoUpdated?.invoke()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -128,7 +162,7 @@ class SpeedTrapListenerService : NotificationListenerService() {
         processSpeedTrapNotification(sbn)
     }
 
-    private fun isSpeedTrapPackage(pkgName: String?): Boolean {
+    fun isSpeedTrapPackage(pkgName: String?): Boolean {
         if (pkgName.isNullOrEmpty()) return false
         val prefs = getSharedPreferences("carhud_prefs", Context.MODE_PRIVATE)
         val customPkg = prefs.getString(SpeedTrapAutoLauncher.KEY_CUSTOM_SPEEDTRAP_PKG, null)

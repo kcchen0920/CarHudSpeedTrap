@@ -127,11 +127,11 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     startService(overlayIntent)
                 }
-                btnToggleOverlay.text = "關閉全域置頂懸浮橫條 (HUD)"
+                btnToggleOverlay.text = "關閉全域置頂 HUD 懸浮球 (右上角)"
                 isOverlayRunning = true
             } else {
                 stopService(overlayIntent)
-                btnToggleOverlay.text = "開啟全域置頂懸浮橫條 (HUD)"
+                btnToggleOverlay.text = "開啟全域置頂 HUD 懸浮球 (右上角)"
                 isOverlayRunning = false
             }
         }
@@ -185,7 +185,7 @@ class MainActivity : AppCompatActivity() {
         val prefs = getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         fun updateAlphaUi(alpha: Float) {
             val percent = (alpha * 100).toInt()
-            tvHudAlphaLabel.text = "HUD 懸浮條透明度（防遮擋前台 App）：目前為 ${(100 - percent)}% 透明 (不透明度 $percent%)"
+            tvHudAlphaLabel.text = "HUD 懸浮球透明度（防遮擋前台 App）：目前為 ${(100 - percent)}% 透明 (不透明度 $percent%)"
             btnAlphaExtreme.backgroundTintList = ColorStateList.valueOf(if (alpha <= 0.55f) 0xFF0284C7.toInt() else 0xFF1E293B.toInt())
             btnAlphaHigh.backgroundTintList = ColorStateList.valueOf(if (alpha in 0.56f..0.78f) 0xFF0284C7.toInt() else 0xFF1E293B.toInt())
             btnAlphaStandard.backgroundTintList = ColorStateList.valueOf(if (alpha > 0.78f) 0xFF0284C7.toInt() else 0xFF1E293B.toInt())
@@ -357,7 +357,7 @@ class MainActivity : AppCompatActivity() {
             getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
                 .edit().putString(KEY_CUSTOM_AA_PKG, selectedPkg).apply()
             updateCurrentAaLabel(tv)
-            Toast.makeText(this, "已成功綁定！點擊橫條 AA 按鈕將直接開啟此應用", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "已成功綁定！點擊懸浮球選單中 AA 按鈕將直接開啟此應用", Toast.LENGTH_LONG).show()
         }
         builder.setNegativeButton("取消", null)
         builder.show()
@@ -367,7 +367,7 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         isOverlayRunning = TopHudOverlayService.isRunning
         val btnToggleOverlay = findViewById<Button?>(R.id.btn_toggle_overlay)
-        btnToggleOverlay?.text = if (TopHudOverlayService.isRunning) "關閉全域置頂懸浮橫條 (HUD)" else "開啟全域置頂懸浮橫條 (HUD)"
+        btnToggleOverlay?.text = if (TopHudOverlayService.isRunning) "關閉全域置頂 HUD 懸浮球 (右上角)" else "開啟全域置頂 HUD 懸浮球 (右上角)"
         checkPermissions()
         updateDiagnosticPanel()
         updateSpeedTrapLabel(findViewById(R.id.tv_current_speedtrap_pkg))

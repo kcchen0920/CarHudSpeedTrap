@@ -136,8 +136,7 @@ class CarHudWidgetProvider : AppWidgetProvider() {
         // 啟動原生 GPS 車速
         GpsSpeedManager.startListening(context)
 
-        // 每次桌面刷新時確保神盾在運行
-        SpeedTrapAutoLauncher.startSpeedTrapIfNeeded(context, bringHomeToFront = true)
+        // 注意：onUpdate 會由系統或桌面頻繁觸發，嚴禁在此重複喚醒神盾，避免神盾頻繁重開崩潰
 
         val cur = SpeedTrapListenerService.latestData
         val speed = if (GpsSpeedManager.currentGpsSpeed > 0) GpsSpeedManager.currentGpsSpeed else cur.currentSpeed
@@ -153,16 +152,12 @@ class CarHudWidgetProvider : AppWidgetProvider() {
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
         when (intent.action) {
-            Intent.ACTION_BOOT_COMPLETED -> {
-                // 開機自動喚醒神盾
-                SpeedTrapAutoLauncher.startSpeedTrapIfNeeded(context, bringHomeToFront = true)
-            }
             ACTION_LAUNCH_AA -> QuickSwitchHelper.launchAndroidAuto(context)
             ACTION_TOGGLE_WIFI -> QuickSwitchHelper.toggleWifi(context)
             ACTION_CLOSE_HUD -> {
                 val overlayIntent = Intent(context, TopHudOverlayService::class.java)
                 context.stopService(overlayIntent)
-                Toast.makeText(context, "已關閉置頂 HUD 橫條", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "已關閉置頂 HUD 懸浮球", Toast.LENGTH_SHORT).show()
             }
         }
     }
