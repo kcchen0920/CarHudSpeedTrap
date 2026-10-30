@@ -21,6 +21,10 @@ $env:PATH = "$javaHome\bin;$scriptRoot\tools\gradle\bin;$env:PATH"
 Set-Location -LiteralPath $projectDir
 
 & $gradleBat assembleDebug --no-daemon
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Build FAILED! Gradle exited with code $LASTEXITCODE" -ForegroundColor Red
+    exit $LASTEXITCODE
+}
 
 $apkOutput = Join-Path $projectDir "app\build\outputs\apk\debug\app-debug.apk"
 $targetApk = Join-Path $scriptRoot "CarHud-debug.apk"

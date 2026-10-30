@@ -181,6 +181,7 @@ class MainActivity : AppCompatActivity() {
         val btnAlphaHigh = findViewById<Button>(R.id.btn_alpha_high)
         val btnAlphaStandard = findViewById<Button>(R.id.btn_alpha_standard)
         val btnExitApp = findViewById<Button>(R.id.btn_exit_app)
+        val prefs = getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
 
         // 9.5 HUD 尺寸縮放 (放大 / 縮小) 控制
         val tvHudScaleLabel = findViewById<TextView>(R.id.tv_hud_scale_label)
@@ -229,7 +230,6 @@ class MainActivity : AppCompatActivity() {
         // 開啟 App 時自動確保 HUD 懸浮球常駐
         TopHudOverlayService.startIfEnabled(this)
 
-        val prefs = getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         fun updateAlphaUi(alpha: Float) {
             val percent = (alpha * 100).toInt()
             tvHudAlphaLabel.text = "HUD 懸浮球透明度（防遮擋前台 App）：目前為 ${(100 - percent)}% 透明 (不透明度 $percent%)"
@@ -416,6 +416,7 @@ class MainActivity : AppCompatActivity() {
         val btnToggleOverlay = findViewById<Button?>(R.id.btn_toggle_overlay)
         btnToggleOverlay?.text = if (TopHudOverlayService.isRunning) "關閉全域置頂 HUD 懸浮球 (右上角)" else "開啟全域置頂 HUD 懸浮球 (右上角)"
         checkPermissions()
+        TopHudOverlayService.startIfEnabled(this)
         updateDiagnosticPanel()
         updateSpeedTrapLabel(findViewById(R.id.tv_current_speedtrap_pkg))
 
@@ -508,11 +509,4 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    override fun onResume() {
-        super.onResume()
-        checkPermissions()
-        TopHudOverlayService.startIfEnabled(this)
-        findViewById<Button>(R.id.btn_toggle_overlay)?.text =
-            if (TopHudOverlayService.isRunning) "關閉全域置頂 HUD 懸浮球 (右上角)" else "開啟全域置頂 HUD 懸浮球 (右上角)"
-    }
 }
