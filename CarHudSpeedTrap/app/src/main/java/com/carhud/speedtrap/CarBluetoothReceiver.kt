@@ -53,6 +53,9 @@ class CarBluetoothReceiver : BroadcastReceiver() {
                 // 2. 自動在背景喚醒神盾測速
                 SpeedTrapAutoLauncher.startSpeedTrapIfNeeded(context, bringHomeToFront = true)
 
+                // 2.5 自動啟動 TopHudOverlayService 懸浮球常駐
+                TopHudOverlayService.startIfEnabled(context)
+
                 // 3. 延遲 3 秒啟動投屏 / Android Auto (待熱點連線就緒)
                 if (autoLaunchAa) {
                     Handler(Looper.getMainLooper()).postDelayed({

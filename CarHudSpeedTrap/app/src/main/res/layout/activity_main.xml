@@ -331,6 +331,63 @@
                 android:textSize="11sp" />
         </LinearLayout>
 
+        <!-- HUD 懸浮球尺寸大小（放大 / 縮小） -->
+        <TextView
+            android:id="@+id/tv_hud_scale_label"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="HUD 懸浮球尺寸大小（放大 / 縮小）：目前 100%"
+            android:textColor="#38BDF8"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btn_scale_compact"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:backgroundTint="#1E293B"
+                android:text="迷你 (75%)"
+                android:textSize="11sp" />
+
+            <Button
+                android:id="@+id/btn_scale_normal"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_marginStart="6dp"
+                android:layout_weight="1"
+                android:backgroundTint="#0284C7"
+                android:text="標準 (100%)"
+                android:textSize="11sp" />
+
+            <Button
+                android:id="@+id/btn_scale_large"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_marginStart="6dp"
+                android:layout_weight="1"
+                android:backgroundTint="#1E293B"
+                android:text="放大 (125%)"
+                android:textSize="11sp" />
+
+            <Button
+                android:id="@+id/btn_scale_xlarge"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_marginStart="6dp"
+                android:layout_weight="1"
+                android:backgroundTint="#1E293B"
+                android:text="特大 (150%)"
+                android:textSize="11sp" />
+        </LinearLayout>
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

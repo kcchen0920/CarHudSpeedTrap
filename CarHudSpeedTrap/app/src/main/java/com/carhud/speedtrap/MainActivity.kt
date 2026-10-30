@@ -182,6 +182,53 @@ class MainActivity : AppCompatActivity() {
         val btnAlphaStandard = findViewById<Button>(R.id.btn_alpha_standard)
         val btnExitApp = findViewById<Button>(R.id.btn_exit_app)
 
+        // 9.5 HUD 尺寸縮放 (放大 / 縮小) 控制
+        val tvHudScaleLabel = findViewById<TextView>(R.id.tv_hud_scale_label)
+        val btnScaleCompact = findViewById<Button>(R.id.btn_scale_compact)
+        val btnScaleNormal = findViewById<Button>(R.id.btn_scale_normal)
+        val btnScaleLarge = findViewById<Button>(R.id.btn_scale_large)
+        val btnScaleXLarge = findViewById<Button>(R.id.btn_scale_xlarge)
+
+        fun updateScaleUi(scale: Float) {
+            val percent = (scale * 100).toInt()
+            tvHudScaleLabel.text = "HUD 懸浮球尺寸大小（放大 / 縮小）：目前為 $percent%"
+            btnScaleCompact.backgroundTintList = ColorStateList.valueOf(if (scale <= 0.85f) 0xFF0284C7.toInt() else 0xFF1E293B.toInt())
+            btnScaleNormal.backgroundTintList = ColorStateList.valueOf(if (scale in 0.86f..1.10f) 0xFF0284C7.toInt() else 0xFF1E293B.toInt())
+            btnScaleLarge.backgroundTintList = ColorStateList.valueOf(if (scale in 1.11f..1.35f) 0xFF0284C7.toInt() else 0xFF1E293B.toInt())
+            btnScaleXLarge.backgroundTintList = ColorStateList.valueOf(if (scale > 1.35f) 0xFF0284C7.toInt() else 0xFF1E293B.toInt())
+        }
+
+        val curScale = prefs.getFloat(TopHudOverlayService.PREF_HUD_SCALE, TopHudOverlayService.DEFAULT_HUD_SCALE)
+        updateScaleUi(curScale)
+
+        btnScaleCompact.setOnClickListener {
+            prefs.edit().putFloat(TopHudOverlayService.PREF_HUD_SCALE, 0.75f).apply()
+            TopHudOverlayService.updateScale(0.75f)
+            updateScaleUi(0.75f)
+            Toast.makeText(this, "已切換為迷你尺寸 (75%)", Toast.LENGTH_SHORT).show()
+        }
+        btnScaleNormal.setOnClickListener {
+            prefs.edit().putFloat(TopHudOverlayService.PREF_HUD_SCALE, 1.0f).apply()
+            TopHudOverlayService.updateScale(1.0f)
+            updateScaleUi(1.0f)
+            Toast.makeText(this, "已切換為標準尺寸 (100%)", Toast.LENGTH_SHORT).show()
+        }
+        btnScaleLarge.setOnClickListener {
+            prefs.edit().putFloat(TopHudOverlayService.PREF_HUD_SCALE, 1.25f).apply()
+            TopHudOverlayService.updateScale(1.25f)
+            updateScaleUi(1.25f)
+            Toast.makeText(this, "已切換為放大尺寸 (125%)", Toast.LENGTH_SHORT).show()
+        }
+        btnScaleXLarge.setOnClickListener {
+            prefs.edit().putFloat(TopHudOverlayService.PREF_HUD_SCALE, 1.50f).apply()
+            TopHudOverlayService.updateScale(1.50f)
+            updateScaleUi(1.50f)
+            Toast.makeText(this, "已切換為特大尺寸 (150%)", Toast.LENGTH_SHORT).show()
+        }
+
+        // 開啟 App 時自動確保 HUD 懸浮球常駐
+        TopHudOverlayService.startIfEnabled(this)
+
         val prefs = getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         fun updateAlphaUi(alpha: Float) {
             val percent = (alpha * 100).toInt()
@@ -459,5 +506,13 @@ class MainActivity : AppCompatActivity() {
             btnOverlay.setTextColor(0xFF10B981.toInt())
             btnOverlay.isEnabled = false
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        checkPermissions()
+        TopHudOverlayService.startIfEnabled(this)
+        findViewById<Button>(R.id.btn_toggle_overlay)?.text =
+            if (TopHudOverlayService.isRunning) "關閉全域置頂 HUD 懸浮球 (右上角)" else "開啟全域置頂 HUD 懸浮球 (右上角)"
     }
 }

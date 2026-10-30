@@ -56,20 +56,8 @@ class CarWifiReceiver : BroadcastReceiver() {
         // 1. 自動在背景喚醒神盾測速 (將畫面退回桌面/背景)
         SpeedTrapAutoLauncher.startSpeedTrapIfNeeded(context, bringHomeToFront = true)
 
-        // 2. 自動啟動 TopHudOverlayService (若已獲取懸浮窗權限)
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(context)) {
-            val overlayIntent = Intent(context, TopHudOverlayService::class.java)
-            try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    ContextCompat.startForegroundService(context, overlayIntent)
-                } else {
-                    context.startService(overlayIntent)
-                }
-                Log.i(TAG, "✓ TopHudOverlayService 已由 Wi-Fi 事件成功啟動")
-            } catch (e: Exception) {
-                Log.w(TAG, "啟動 TopHudOverlayService 失敗: ${e.message}")
-            }
-        }
+        // 2. 自動啟動 TopHudOverlayService 懸浮球常駐
+        TopHudOverlayService.startIfEnabled(context)
     }
 
     private fun checkIsWifiConnected(context: Context, intent: Intent): Boolean {

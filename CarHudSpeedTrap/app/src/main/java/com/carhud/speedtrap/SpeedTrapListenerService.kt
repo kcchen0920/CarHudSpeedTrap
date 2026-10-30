@@ -130,6 +130,9 @@ class SpeedTrapListenerService : NotificationListenerService() {
         // 服務啟動時同步啟用高頻 GPS 測速引擎
         GpsSpeedManager.startListening(applicationContext)
 
+        // 核心：連線時自動確保 HUD 懸浮球常駐
+        TopHudOverlayService.startIfEnabled(applicationContext)
+
         // 核心亮點：立即掃描當前系統作用中通知（若神盾已在背景執行，立即解析無需等待新事件）
         try {
             activeNotifications?.forEach { sbn ->
@@ -159,6 +162,8 @@ class SpeedTrapListenerService : NotificationListenerService() {
         super.onNotificationPosted(sbn)
         if (sbn == null) return
         if (!isSpeedTrapPackage(sbn.packageName)) return
+        // 核心保活：收到神盾測速通知時，若 HUD 懸浮球未啟動，自動拉起常駐
+        TopHudOverlayService.startIfEnabled(applicationContext)
         processSpeedTrapNotification(sbn)
     }
 
