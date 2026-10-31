@@ -4,13 +4,19 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
+import android.location.Location
+import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.text.Editable
+import android.text.TextWatcher
 import android.widget.Button
+import android.widget.CheckBox
+import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
@@ -260,6 +266,71 @@ class MainActivity : AppCompatActivity() {
             TopHudOverlayService.updateAlpha(0.88f)
             updateAlphaUi(0.88f)
             Toast.makeText(this, "已切換為標準透光模式 (88%)", Toast.LENGTH_SHORT).show()
+        }
+
+        // 🚗 方案 6.1: 客廳電視返家到站連動 UI 控制邏輯
+        val cbHomeEtaEnabled = findViewById<CheckBox>(R.id.cb_home_eta_enabled)
+        val tvHomeCoords = findViewById<TextView>(R.id.tv_home_coords)
+        val btnSetHomeCoords = findViewById<Button>(R.id.btn_set_home_coords)
+        val etHomeChannel = findViewById<EditText>(R.id.et_home_channel)
+        val btnTestHomeEta = findViewById<Button>(R.id.btn_test_home_eta)
+
+        fun updateHomeCoordsUi() {
+            val coords = CarHomeEtaManager.getHomeLocation(this)
+            if (coords != null) {
+                tvHomeCoords.text = String.format("目前住家位置：緯度 %.4f, 經度 %.4f", coords.first, coords.second)
+                tvHomeCoords.setTextColor(0xFF10B981.toInt())
+            } else {
+                tvHomeCoords.text = "目前住家位置：尚未設定 (點擊下方按鈕以目前 GPS 設定)"
+                tvHomeCoords.setTextColor(0xFFF59E0B.toInt())
+            }
+        }
+
+        cbHomeEtaEnabled.isChecked = CarHomeEtaManager.isEnabled(this)
+        cbHomeEtaEnabled.setOnCheckedChangeListener { _, isChecked ->
+            CarHomeEtaManager.setEnabled(this, isChecked)
+            Toast.makeText(this, if (isChecked) "已啟用返家電視推播連動" else "已關閉返家電視推播", Toast.LENGTH_SHORT).show()
+        }
+
+        updateHomeCoordsUi()
+        etHomeChannel.setText(CarHomeEtaManager.getChannel(this))
+        etHomeChannel.addTextChangedListener(object : TextWatcher {
+            override fun afterTextChanged(s: Editable?) {
+                CarHomeEtaManager.setChannel(this@MainActivity, s?.toString() ?: CarHomeEtaManager.DEFAULT_CHANNEL)
+            }
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+        })
+
+        btnSetHomeCoords.setOnClickListener {
+            val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            var bestLoc: Location? = null
+            try {
+                val gpsLoc = lm?.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                val netLoc = lm?.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+                bestLoc = when {
+                    gpsLoc != null && netLoc != null -> if (gpsLoc.time > netLoc.time) gpsLoc else netLoc
+                    gpsLoc != null -> gpsLoc
+                    else -> netLoc
+                }
+            } catch (e: SecurityException) {
+                Toast.makeText(this, "請先授予 GPS 定位權限", Toast.LENGTH_SHORT).show()
+            }
+
+            if (bestLoc != null) {
+                CarHomeEtaManager.setHomeLocation(this, bestLoc.latitude, bestLoc.longitude)
+                updateHomeCoordsUi()
+                Toast.makeText(this, String.format("已設定住家: %.4f, %.4f", bestLoc.latitude, bestLoc.longitude), Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(this, "目前尚未取得有效 GPS 定位，請至開闊處稍候重試", Toast.LENGTH_LONG).show()
+            }
+        }
+
+        btnTestHomeEta.setOnClickListener {
+            Toast.makeText(this, "正在發送返家模擬推播至客廳電視...", Toast.LENGTH_SHORT).show()
+            CarHomeEtaManager.sendTestPush(this) { success, msg ->
+                Toast.makeText(this, if (success) "✅ 客廳電視已收到推播！($msg)" else "❌ 推播失敗: $msg", Toast.LENGTH_LONG).show()
+            }
         }
 
         // 10. 徹底關閉並退出本程式

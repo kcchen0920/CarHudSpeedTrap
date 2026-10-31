@@ -465,6 +465,107 @@
             android:layout_marginBottom="16dp"
             android:background="#22FFFFFF" />
 
+        <!-- 🚗 方案 6.1：客廳電視返家到站即時連動 -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="【第四步：客廳電視返家到站連動 (Car-to-Living-Room ETA)】"
+            android:textColor="#00F2FE"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="進入住家 10 公里範圍時，自動通報客廳電視 Chromebox-TV-Home 顯示抵達時間與溫馨卡片"
+            android:textColor="#94A3B8"
+            android:textSize="12sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:background="#151E32"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <CheckBox
+                android:id="@+id/cb_home_eta_enabled"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:buttonTint="#00F2FE"
+                android:checked="true"
+                android:text="啟用返家到站電視即時連動通報"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/tv_home_coords"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="目前住家位置：尚未設定 (點擊下方按鈕以目前 GPS 設定)"
+                android:textColor="#F59E0B"
+                android:textSize="12sp" />
+
+            <Button
+                android:id="@+id/btn_set_home_coords"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:layout_marginTop="8dp"
+                android:backgroundTint="#0F766E"
+                android:text="📍 設定目前 GPS 位置為住家 (Home)"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="家庭專屬推播頻道識別碼 (ntfy.sh Topic)："
+                android:textColor="#94A3B8"
+                android:textSize="12sp" />
+
+            <EditText
+                android:id="@+id/et_home_channel"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:layout_marginTop="4dp"
+                android:background="#0A0F1D"
+                android:hint="kcchen-family-livingroom"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:singleLine="true"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#475569"
+                android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/btn_test_home_eta"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:layout_marginTop="10dp"
+                android:backgroundTint="#2563EB"
+                android:text="🧪 測試發送返家推播至客廳電視"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="16dp"
+            android:layout_marginBottom="16dp"
+            android:background="#22FFFFFF" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="16dp"
+            android:layout_marginBottom="16dp"
+            android:background="#22FFFFFF" />
+
         <!-- 退出與關閉程式 -->
         <Button
             android:id="@+id/btn_exit_app"

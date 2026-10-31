@@ -77,6 +77,11 @@ object GpsSpeedManager {
             // 觸發全域與監聽回呼
             SpeedTrapListenerService.onDataUpdated?.invoke(updatedData)
             onGpsSpeedUpdated?.invoke(speedKmh, lastLocationDesc)
+
+            // 🚗 方案 6.1: 車載返家即時到站 (Car-to-Living-Room ETA) 自動運算與通報
+            appContext?.let { ctx ->
+                CarHomeEtaManager.onLocationUpdated(ctx, location, speedKmh)
+            }
         }
 
         @Deprecated("Deprecated in Java")
