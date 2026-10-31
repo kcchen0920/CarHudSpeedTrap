@@ -50,8 +50,11 @@ class CarBluetoothReceiver : BroadcastReceiver() {
                 // 1. 自動開啟 Wi-Fi (以利連線手機熱點)
                 QuickSwitchHelper.toggleWifi(context)
 
-                // 2. 自動在背景喚醒神盾測速
-                SpeedTrapAutoLauncher.startSpeedTrapIfNeeded(context, bringHomeToFront = true)
+                // 2. 自動檢查神盾測速 (非開機震盪期且絕不強制切桌面)
+                val isRecentBoot = android.os.SystemClock.elapsedRealtime() < 45000L
+                if (!isRecentBoot) {
+                    SpeedTrapAutoLauncher.startSpeedTrapIfNeeded(context, bringHomeToFront = false)
+                }
 
                 // 2.5 自動啟動 TopHudOverlayService 懸浮球常駐
                 TopHudOverlayService.startIfEnabled(context)

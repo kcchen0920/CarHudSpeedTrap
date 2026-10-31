@@ -78,9 +78,15 @@ object SpeedTrapAutoLauncher {
      * 檢查並自動喚醒神盾 App
      * @param bringHomeToFront 啟動後是否將畫面切回桌面 (避免神盾大視窗蓋住車機介面)
      * @param forceLaunch 是否強制啟動 (忽略背景心跳檢測與防抖冷卻)
+     * @param isBoot 是否處於開機階段 (開機階段禁止頻繁跳轉桌面與避免異常斷言)
      */
     @Synchronized
-    fun startSpeedTrapIfNeeded(context: Context, bringHomeToFront: Boolean = true, forceLaunch: Boolean = false) {
+    fun startSpeedTrapIfNeeded(
+        context: Context,
+        bringHomeToFront: Boolean = true,
+        forceLaunch: Boolean = false,
+        isBoot: Boolean = false
+    ) {
         val now = System.currentTimeMillis()
         val nowElapsed = SystemClock.elapsedRealtime()
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
@@ -123,7 +129,11 @@ object SpeedTrapAutoLauncher {
 
         if (targetPkg == null) {
             Log.w(TAG, "未偵測到神盾測速照相 App")
-            Toast.makeText(context, "未找到神盾 App，請至控制台「指定神盾應用」", Toast.LENGTH_LONG).show()
+            if (!isBoot) {
+                Handler(Looper.getMainLooper()).post {
+                    Toast.makeText(context, "未找到神盾 App，請至控制台「指定神盾應用」", Toast.LENGTH_LONG).show()
+                }
+            }
             return
         }
 
@@ -139,14 +149,18 @@ object SpeedTrapAutoLauncher {
             try {
                 context.startActivity(launchIntent)
                 Log.i(TAG, "已平順喚醒神盾測速 App ($targetPkg)")
-                Toast.makeText(context, "正在啟動神盾測速照相...", Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                Log.e(TAG, "啟動神盾失敗: ${e.message}")
+                if (!isBoot) {
+                    Handler(Looper.getMainLooper()).post {
+                        Toast.makeText(context, "正在啟動神盾測速照相...", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (t: Throwable) {
+                Log.e(TAG, "啟動神盾 Activity 發生例外 (避免崩潰): ${t.message}")
                 return
             }
 
-            // 延遲 2.8 秒待神盾完成冷啟動初始化後，再將畫面平順壓回桌面 (避免過快打斷導致生命週期異常)
-            if (bringHomeToFront) {
+            // 開機階段絕不執行強制壓回桌面 (避免與系統開機啟動競爭造成開關閃爍與 WindowManager assertion)
+            if (bringHomeToFront && !isBoot) {
                 Handler(Looper.getMainLooper()).postDelayed({
                     val homeIntent = Intent(Intent.ACTION_MAIN).apply {
                         addCategory(Intent.CATEGORY_HOME)
@@ -156,7 +170,7 @@ object SpeedTrapAutoLauncher {
                         context.startActivity(homeIntent)
                         Log.d(TAG, "已將主畫面切回桌面，神盾持續在背景常駐監控")
                     } catch (e: Exception) {
-                        e.printStackTrace()
+                        Log.w(TAG, "壓回桌面失敗: ${e.message}")
                     }
                 }, 2800L)
             }

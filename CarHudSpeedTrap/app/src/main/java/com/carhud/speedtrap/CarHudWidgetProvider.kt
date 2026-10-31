@@ -7,7 +7,6 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.widget.RemoteViews
-
 import android.widget.Toast
 
 class CarHudWidgetProvider : AppWidgetProvider() {
@@ -128,10 +127,7 @@ class CarHudWidgetProvider : AppWidgetProvider() {
         // 核心亮點 1：啟動原生 GPS 即時車速引擎 (每 0.5 秒即時刷新)
         GpsSpeedManager.startListening(context)
 
-        // 核心亮點 2：CarWebGuru 載入 Widget 時，自動喚醒神盾 App，免手動點擊
-        SpeedTrapAutoLauncher.startSpeedTrapIfNeeded(context, bringHomeToFront = true)
-
-        // 核心亮點 3：自動確保全域置頂 HUD 懸浮球常駐
+        // 核心亮點 2：自動確保全域置頂 HUD 懸浮球常駐 (避免開機閃爍與頻繁重開)
         TopHudOverlayService.startIfEnabled(context)
     }
 
@@ -162,8 +158,12 @@ class CarHudWidgetProvider : AppWidgetProvider() {
             ACTION_TOGGLE_WIFI -> QuickSwitchHelper.toggleWifi(context)
             ACTION_CLOSE_HUD -> {
                 val overlayIntent = Intent(context, TopHudOverlayService::class.java)
-                context.stopService(overlayIntent)
-                Toast.makeText(context, "已關閉置頂 HUD 懸浮球", Toast.LENGTH_SHORT).show()
+                try {
+                    context.stopService(overlayIntent)
+                    Toast.makeText(context, "已關閉置頂 HUD 懸浮球", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
             }
         }
     }

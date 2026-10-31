@@ -160,7 +160,11 @@ class TopHudOverlayService : Service() {
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
 
-        startForeground(1001, notification)
+        try {
+            startForeground(1001, notification)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     private fun initOverlay() {
@@ -281,7 +285,11 @@ class TopHudOverlayService : Service() {
             resetAutoCollapseTimer()
         }
 
-        windowManager?.addView(overlayView, params)
+        try {
+            windowManager?.addView(overlayView, params)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
 
         // 載入當前測速快取數據
         updateOverlayUi(SpeedTrapListenerService.latestData)
