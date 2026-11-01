@@ -55,9 +55,37 @@ class SpeedTrapListenerService : NotificationListenerService() {
         // 保存當前連線中的 Listener 實例
         var currentInstance: SpeedTrapListenerService? = null
 
-        // 供 Activity / Overlay 註冊回呼
+        // 供 Activity / Overlay 註冊回呼 (支援多觀察者模式防護)
         var onDataUpdated: ((SpeedTrapData) -> Unit)? = null
         var onDebugInfoUpdated: (() -> Unit)? = null
+
+        private val dataListeners = java.util.concurrent.CopyOnWriteArrayList<(SpeedTrapData) -> Unit>()
+
+        fun addDataListener(listener: (SpeedTrapData) -> Unit) {
+            if (!dataListeners.contains(listener)) dataListeners.add(listener)
+        }
+
+        fun removeDataListener(listener: (SpeedTrapData) -> Unit) {
+            dataListeners.remove(listener)
+        }
+
+        fun dispatchDataUpdated(data: SpeedTrapData) {
+            onDataUpdated?.invoke(data)
+            dataListeners.forEach {
+                try { it.invoke(data) } catch (e: Exception) { Log.w(TAG, "listener error: ${e.message}") }
+            }
+        }
+
+        // 預先編譯正則表達式，節省高頻通知解析 CPU 與 GC 負荷
+        private val PATTERN_DECIMAL_KM = Pattern.compile("(\\d+\\.\\d+)\\s*(?:公里|km)", Pattern.CASE_INSENSITIVE)
+        private val PATTERN_PREFIX_KM = Pattern.compile("(?:前方|距離|距|剩餘)\\s*(\\d+)\\s*(?:公里|km)", Pattern.CASE_INSENSITIVE)
+        private val PATTERN_METERS = Pattern.compile("(\\d+)\\s*(?:公尺|米)", Pattern.CASE_INSENSITIVE)
+        private val PATTERN_METERS_STANDALONE = Pattern.compile("(?<!(?:km|kp)/)\\b(\\d{2,4})\\s*m\\b", Pattern.CASE_INSENSITIVE)
+        private val PATTERN_SPEED = Pattern.compile("(?:目前時速|目前車速|目前速度|車速|速度|目前)\\s*[:：=]?\\s*(\\d{1,3})")
+        private val PATTERN_EXPLICIT_LIMIT = Pattern.compile("(?:限速|速限|限制時速|速限值|時速限制|最高速限|道路速限|法定速限|速限為|限速為)\\s*[:：=]?\\s*(\\d{2,3})")
+        private val PATTERN_CAM_FOLLOWED_LIMIT = Pattern.compile("(?:固定測速|固定照相|固定式|區間測速|區間起點|區間終點|流動測速|流動照相|科技執法|違規取締|測速照相|測速|照相)\\s*[:：=\\s-]*[\\[(（]?\\s*(\\d{2,3})\\s*(?:公里|km/h|km|kph)?[\\])）]?")
+        private val PATTERN_BRACKET_LIMIT = Pattern.compile("[\\[(（]\\s*(\\d{2,3})\\s*(?:公里|km/h|kph)?[\\])）]\\s*(?:固定|測速|照相|區間|科技執法|流動)")
+        private val PATTERN_KM_UNIT = Pattern.compile("(\\d{2,3})\\s*(?:公里|km/h|kph)", Pattern.CASE_INSENSITIVE)
 
         /**
          * 判定神盾是否已在運行中（多維度檢查：5分鐘內通知心跳、作用中常駐狀態列通知）
@@ -258,8 +286,8 @@ class SpeedTrapListenerService : NotificationListenerService() {
             camType = finalData.camType
         )
 
-        // 2. 觸發即時回呼
-        onDataUpdated?.invoke(finalData)
+        // 2. 觸發即時回呼 (多觀察者派發)
+        dispatchDataUpdated(finalData)
         onDebugInfoUpdated?.invoke()
     }
 
@@ -294,7 +322,7 @@ class SpeedTrapListenerService : NotificationListenerService() {
                 currentSpeed = clearedData.currentSpeed,
                 camType = "🟢 路況順暢"
             )
-            onDataUpdated?.invoke(clearedData)
+            dispatchDataUpdated(clearedData)
             onDebugInfoUpdated?.invoke()
         }
     }
@@ -322,7 +350,7 @@ class SpeedTrapListenerService : NotificationListenerService() {
 
             // 2. 匹配距離 (優先解析距離，避免距離數值干擾速限判定)
             // 2a. 帶小數點之公里距離 (如: 1.2公里、0.8km，小數點必為距離)
-            val decimalKmMatcher = Pattern.compile("(\\d+\\.\\d+)\\s*(?:公里|km)", Pattern.CASE_INSENSITIVE).matcher(content)
+            val decimalKmMatcher = PATTERN_DECIMAL_KM.matcher(content)
             if (decimalKmMatcher.find()) {
                 val km = decimalKmMatcher.group(1)?.toFloatOrNull() ?: 0f
                 dist = (km * 1000).toInt()
@@ -330,7 +358,7 @@ class SpeedTrapListenerService : NotificationListenerService() {
 
             // 2b. 明確帶有「前方/距離/距/剩餘」的前綴公里數 (如: 前方 2 公里、距離 1 公里)
             if (dist == 0) {
-                val prefixKmMatcher = Pattern.compile("(?:前方|距離|距|剩餘)\\s*(\\d+)\\s*(?:公里|km)", Pattern.CASE_INSENSITIVE).matcher(content)
+                val prefixKmMatcher = PATTERN_PREFIX_KM.matcher(content)
                 if (prefixKmMatcher.find()) {
                     val km = prefixKmMatcher.group(1)?.toFloatOrNull() ?: 0f
                     dist = (km * 1000).toInt()
@@ -339,14 +367,14 @@ class SpeedTrapListenerService : NotificationListenerService() {
 
             // 2c. 公尺/米/m 距離 (如: 500公尺、350m、400 米、前方 200m)
             if (dist == 0) {
-                val mMatcher = Pattern.compile("(\\d+)\\s*(?:公尺|米)", Pattern.CASE_INSENSITIVE).matcher(content)
+                val mMatcher = PATTERN_METERS.matcher(content)
                 if (mMatcher.find()) {
                     dist = mMatcher.group(1)?.toIntOrNull() ?: 0
                 }
             }
             if (dist == 0) {
                 // 排除 km/h、kph 之後的獨立 m 距離 (例如 350m, 400 m)
-                val mStandaloneMatcher = Pattern.compile("(?<!(?:km|kp)/)\\b(\\d{2,4})\\s*m\\b", Pattern.CASE_INSENSITIVE).matcher(content)
+                val mStandaloneMatcher = PATTERN_METERS_STANDALONE.matcher(content)
                 if (mStandaloneMatcher.find()) {
                     dist = mStandaloneMatcher.group(1)?.toIntOrNull() ?: 0
                 }
@@ -354,7 +382,7 @@ class SpeedTrapListenerService : NotificationListenerService() {
 
             // 3. 匹配目前車速 (若通知中有提及時速)
             // 支援: "目前時速: 55", "時速 60", "目前車速 70", "車速 80", "目前: 70"
-            val speedMatcher = Pattern.compile("(?:目前時速|目前車速|目前速度|車速|速度|目前)\\s*[:：=]?\\s*(\\d{1,3})").matcher(content)
+            val speedMatcher = PATTERN_SPEED.matcher(content)
             if (speedMatcher.find()) {
                 val s = speedMatcher.group(1)?.toIntOrNull() ?: 0
                 if (s in 0..250) {
@@ -364,7 +392,7 @@ class SpeedTrapListenerService : NotificationListenerService() {
 
             // 4. 匹配速限 (核心算法，完整解析各測速軟體實際格式)
             // 規則 A: 明確速限前綴 (支援: "限速 50", "速限: 60", "速限：70", "限制時速 110", "最高速限 100", "道路速限 60", "速限值 80", "限速50公里", "速限60km/h")
-            val explicitLimitMatcher = Pattern.compile("(?:限速|速限|限制時速|速限值|時速限制|最高速限|道路速限|法定速限|速限為|限速為)\\s*[:：=]?\\s*(\\d{2,3})").matcher(content)
+            val explicitLimitMatcher = PATTERN_EXPLICIT_LIMIT.matcher(content)
             if (explicitLimitMatcher.find()) {
                 val l = explicitLimitMatcher.group(1)?.toIntOrNull() ?: 0
                 if (l in 20..140) {
@@ -374,7 +402,7 @@ class SpeedTrapListenerService : NotificationListenerService() {
 
             // 規則 B: 相機關鍵字後方緊接速限 (如: "固定測速照相 50公里", "固定測速 50", "固定照相 (50)", "區間測速 [60]", "科技執法 50公里", "流動照相 40")
             if (limit == 0) {
-                val camFollowedByLimitMatcher = Pattern.compile("(?:固定測速|固定照相|固定式|區間測速|區間起點|區間終點|流動測速|流動照相|科技執法|違規取締|測速照相|測速|照相)\\s*[:：=\\s-]*[\\[(（]?\\s*(\\d{2,3})\\s*(?:公里|km/h|km|kph)?[\\])）]?").matcher(content)
+                val camFollowedByLimitMatcher = PATTERN_CAM_FOLLOWED_LIMIT.matcher(content)
                 if (camFollowedByLimitMatcher.find()) {
                     val l = camFollowedByLimitMatcher.group(1)?.toIntOrNull() ?: 0
                     if (l in 20..140) {
@@ -385,7 +413,7 @@ class SpeedTrapListenerService : NotificationListenerService() {
 
             // 規則 C: 括弧/方括號包圍之速限 (如: "[50] 固定測速照相", "(60) 區間測速", "固定測速 (50)")
             if (limit == 0) {
-                val bracketMatcher = Pattern.compile("[\\[(（]\\s*(\\d{2,3})\\s*(?:公里|km/h|kph)?[\\])）]\\s*(?:固定|測速|照相|區間|科技執法|流動)").matcher(content)
+                val bracketMatcher = PATTERN_BRACKET_LIMIT.matcher(content)
                 if (bracketMatcher.find()) {
                     val l = bracketMatcher.group(1)?.toIntOrNull() ?: 0
                     if (l in 20..140) {
@@ -396,7 +424,7 @@ class SpeedTrapListenerService : NotificationListenerService() {
 
             // 規則 D: "XX公里" 或 "XX km/h" 且排除距離與目前時速後的速限值 (如: "前方 300 公尺 50公里 取締")
             if (limit == 0) {
-                val kmUnitMatcher = Pattern.compile("(\\d{2,3})\\s*(?:公里|km/h|kph)", Pattern.CASE_INSENSITIVE).matcher(content)
+                val kmUnitMatcher = PATTERN_KM_UNIT.matcher(content)
                 while (kmUnitMatcher.find()) {
                     val l = kmUnitMatcher.group(1)?.toIntOrNull() ?: 0
                     if (l in 20..140 && l != dist && l != speed) {

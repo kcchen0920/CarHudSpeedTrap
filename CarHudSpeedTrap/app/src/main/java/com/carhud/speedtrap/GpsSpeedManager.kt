@@ -39,8 +39,65 @@ object GpsSpeedManager {
     private var lastLocation: Location? = null
     private var lastLocationTimeMs: Long = 0L
 
-    // 供 UI / MainActivity / HUD 監聽 GPS 狀態更新
+    // 供 UI / MainActivity / HUD 監聽 GPS 狀態更新 (支援多觀察者防護)
     var onGpsSpeedUpdated: ((speed: Int, desc: String) -> Unit)? = null
+
+    private val speedListeners = java.util.concurrent.CopyOnWriteArrayList<(speed: Int, desc: String) -> Unit>()
+
+    fun addSpeedListener(listener: (speed: Int, desc: String) -> Unit) {
+        if (!speedListeners.contains(listener)) speedListeners.add(listener)
+    }
+
+    fun removeSpeedListener(listener: (speed: Int, desc: String) -> Unit) {
+        speedListeners.remove(listener)
+    }
+
+    private fun dispatchGpsSpeed(speed: Int, desc: String) {
+        onGpsSpeedUpdated?.invoke(speed, desc)
+        speedListeners.forEach {
+            try { it.invoke(speed, desc) } catch (e: Exception) { Log.w(TAG, "listener error: ${e.message}") }
+        }
+    }
+
+    @Volatile
+    private var isLowPowerMode = false
+    private var zeroSpeedCount = 0
+
+    private fun checkAdaptiveThrottling(speedKmh: Int) {
+        if (speedKmh == 0) {
+            zeroSpeedCount++
+            if (zeroSpeedCount >= 25 && !isLowPowerMode) { // 靜止約 12.5 秒
+                applyLocationInterval(2000L, 3f)
+                isLowPowerMode = true
+                Log.d(TAG, "⚡ 車輛靜止停等，切換為節能 GPS 採樣 (2000ms)")
+            }
+        } else {
+            if (isLowPowerMode) {
+                applyLocationInterval(500L, 0f)
+                isLowPowerMode = false
+                Log.d(TAG, "🚗 車輛起步移動，立即切換為高敏即時 GPS 採樣 (500ms)")
+            }
+            zeroSpeedCount = 0
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun applyLocationInterval(intervalMs: Long, minDistanceM: Float) {
+        val lm = locationManager ?: return
+        try {
+            if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                lm.requestLocationUpdates(
+                    LocationManager.GPS_PROVIDER,
+                    intervalMs,
+                    minDistanceM,
+                    singleLocationListener,
+                    Looper.getMainLooper()
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "動態切換 GPS 採樣率失敗: ${e.message}")
+        }
+    }
 
     private val singleLocationListener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
@@ -48,6 +105,7 @@ object GpsSpeedManager {
 
             val speedKmh = calculateSpeed(location)
             currentGpsSpeed = speedKmh
+            checkAdaptiveThrottling(speedKmh)
 
             val accuracy = if (location.hasAccuracy()) "±${location.accuracy.toInt()}m" else "未知"
             lastLocationDesc = String.format(
@@ -74,9 +132,9 @@ object GpsSpeedManager {
                 )
             }
 
-            // 觸發全域與監聽回呼
-            SpeedTrapListenerService.onDataUpdated?.invoke(updatedData)
-            onGpsSpeedUpdated?.invoke(speedKmh, lastLocationDesc)
+            // 觸發全域與多監聽回呼
+            SpeedTrapListenerService.dispatchDataUpdated(updatedData)
+            dispatchGpsSpeed(speedKmh, lastLocationDesc)
 
             // 🚗 方案 6.1: 車載返家即時到站 (Car-to-Living-Room ETA) 自動運算與通報
             appContext?.let { ctx ->

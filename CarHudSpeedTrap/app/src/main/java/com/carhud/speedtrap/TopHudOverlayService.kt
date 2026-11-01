@@ -294,14 +294,17 @@ class TopHudOverlayService : Service() {
         // 載入當前測速快取數據
         updateOverlayUi(SpeedTrapListenerService.latestData)
 
-        // 監聽神盾通知與 GPS 車速回呼
-        SpeedTrapListenerService.onDataUpdated = { data ->
-            updateOverlayUi(data)
-        }
+        // 註冊神盾通知與 GPS 車速回呼 (多觀察者模式，不覆蓋其他組件)
+        SpeedTrapListenerService.addDataListener(dataListener)
+        GpsSpeedManager.addSpeedListener(speedListener)
+    }
 
-        GpsSpeedManager.onGpsSpeedUpdated = { _, _ ->
-            updateOverlayUi(SpeedTrapListenerService.latestData)
-        }
+    private val dataListener: (SpeedTrapData) -> Unit = { data ->
+        updateOverlayUi(data)
+    }
+
+    private val speedListener: (Int, String) -> Unit = { _, _ ->
+        updateOverlayUi(SpeedTrapListenerService.latestData)
     }
 
     /**
@@ -439,14 +442,16 @@ class TopHudOverlayService : Service() {
         super.onDestroy()
         isRunning = false
         currentService = null
-        SpeedTrapListenerService.onDataUpdated = null
-        GpsSpeedManager.onGpsSpeedUpdated = null
+        SpeedTrapListenerService.removeDataListener(dataListener)
+        GpsSpeedManager.removeSpeedListener(speedListener)
         autoCollapseHandler.removeCallbacks(autoCollapseRunnable)
         if (overlayView != null) {
             try {
-                windowManager?.removeView(overlayView)
+                if (overlayView?.isAttachedToWindow == true) {
+                    windowManager?.removeView(overlayView)
+                }
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.w(TAG, "removeView 忽略例外: ${e.message}")
             }
             overlayView = null
         }

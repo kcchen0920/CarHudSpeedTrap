@@ -341,14 +341,26 @@ class MainActivity : AppCompatActivity() {
             finishAffinity()
         }
 
-        // 註冊即時診斷與 GPS 回呼
+        // 註冊即時診斷與 GPS 回呼 (多觀察者模式防護)
         SpeedTrapListenerService.onDebugInfoUpdated = {
             runOnUiThread { updateDiagnosticPanel() }
         }
+        GpsSpeedManager.addSpeedListener(mainSpeedListener)
+        SpeedTrapListenerService.addDataListener(mainDataListener)
+    }
 
-        GpsSpeedManager.onGpsSpeedUpdated = { _, _ ->
-            runOnUiThread { updateDiagnosticPanel() }
-        }
+    private val mainSpeedListener: (Int, String) -> Unit = { _, _ ->
+        runOnUiThread { updateDiagnosticPanel() }
+    }
+
+    private val mainDataListener: (SpeedTrapData) -> Unit = { _ ->
+        runOnUiThread { updateDiagnosticPanel() }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        GpsSpeedManager.removeSpeedListener(mainSpeedListener)
+        SpeedTrapListenerService.removeDataListener(mainDataListener)
     }
 
     private fun requestLocationPermission() {

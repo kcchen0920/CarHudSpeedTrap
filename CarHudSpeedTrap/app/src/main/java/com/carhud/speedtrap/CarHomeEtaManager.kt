@@ -36,6 +36,10 @@ object CarHomeEtaManager {
     private var lastDistanceMeters: Float = -1f
     private var lastNotifyTimeMs: Long = 0L
 
+    private val pushExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "CarEtaPushExecutor").apply { isDaemon = true }
+    }
+
     fun isEnabled(context: Context): Boolean {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         return prefs.getBoolean(KEY_HOME_ETA_ENABLED, true)
@@ -161,21 +165,22 @@ object CarHomeEtaManager {
         val channel = getChannel(context)
         val endpoint = "https://ntfy.sh/$channel"
 
-        thread(name = "CarEtaPushThread") {
+        pushExecutor.execute {
             try {
-                val jsonPayload = JSONObject().apply {
-                    put("event", event)
-                    put("distance_km", distanceKm.toDouble())
-                    put("speed_kmh", speedKmh)
-                    put("eta_minutes", etaMinutes)
-                    put("timestamp", System.currentTimeMillis() / 1000)
-                }
-
                 val title = if (event == "car_arrived") "🏡 爸爸已抵達家門！" else "🚗 爸爸正在回家路上 (ETA: ${etaMinutes}分)"
                 val message = if (event == "car_arrived") {
                     "車輛已進入住家 500m 範圍，請準備開門迎接！"
                 } else {
                     "目前距離住家約 ${distanceKm} km，預估 $etaMinutes 分鐘後抵達客廳。"
+                }
+
+                val jsonPayload = JSONObject().apply {
+                    put("event", event)
+                    put("distance_km", distanceKm.toDouble())
+                    put("speed_kmh", speedKmh)
+                    put("eta_minutes", etaMinutes)
+                    put("message", message)
+                    put("timestamp", System.currentTimeMillis() / 1000)
                 }
 
                 val url = URL(endpoint)
