@@ -17,6 +17,7 @@
      - 平板端提交並觸發建置時，統一執行 `./termux_ci.sh`，由腳本自動 push 並在 Termux 終端機內即時回報 GitHub Actions 雲端 CI/CD 狀態（Pass/Fail），並自動產出可直接點擊的 APK 下載連結。
    - **筆電 (Notebook / Windows)**：
      - 本地執行 `.\build_apk.ps1` 進行編譯驗證，並自動同步至 Google 雲端硬碟備份路徑。
+     - **雲端硬碟 APK 備份規範**：上傳至雲端硬碟（車用資料夾）時，必須先將既有的舊 APK 移至獨立新建的備份資料夾（`backup/`，以時間戳記命名）做歸檔封存，確保車用資料夾根目錄下僅保留單一最新的 APK。
 
 3. **安全規範**：
    - 嚴格遵守 `.gitignore`，不得提交本機 keystore、金鑰、本地路徑設定或 build 產物。

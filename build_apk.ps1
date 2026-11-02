@@ -34,6 +34,7 @@ if (Test-Path -LiteralPath $apkOutput) {
     Write-Host "Build SUCCESS! Output: $targetApk" -ForegroundColor Green
 
     # 自動同步至 Google 雲端硬碟 (G:\我的雲端硬碟\車用 & D:\文件\car)
+    # 規則：將舊版 APK 移至獨立 backup 資料夾歸檔，根目錄僅保留單一最新 APK
     $cloudDirs = @(
         (Join-Path "G:\" "我的雲端硬碟\車用"),
         (Join-Path "D:\" "文件\car")
@@ -44,9 +45,25 @@ if (Test-Path -LiteralPath $apkOutput) {
                 New-Item -ItemType Directory -Path $cDir -Force -ErrorAction SilentlyContinue | Out-Null
             }
             if (Test-Path -LiteralPath $cDir) {
+                $backupDir = Join-Path $cDir "backup"
+                if (-not (Test-Path -LiteralPath $backupDir)) {
+                    New-Item -ItemType Directory -Path $backupDir -Force -ErrorAction SilentlyContinue | Out-Null
+                }
+
+                # 備份車用資料夾下既有的舊 APK
+                $existingApks = Get-ChildItem -LiteralPath $cDir -Filter "*.apk" -File -ErrorAction SilentlyContinue
+                foreach ($oldApk in $existingApks) {
+                    $timeTag = $oldApk.LastWriteTime.ToString("yyyyMMdd_HHmmss")
+                    $backupName = "$($oldApk.BaseName)_$timeTag$($oldApk.Extension)"
+                    $backupDest = Join-Path $backupDir $backupName
+                    Move-Item -LiteralPath $oldApk.FullName -Destination $backupDest -Force -ErrorAction SilentlyContinue
+                    Write-Host "Archived old APK to: $backupDest" -ForegroundColor Yellow
+                }
+
+                # 寫入最新 APK
                 $destFile = Join-Path $cDir "CarHud-debug.apk"
                 Copy-Item -LiteralPath $targetApk -Destination $destFile -Force
-                Write-Host "Synced to Cloud Drive: $destFile" -ForegroundColor Green
+                Write-Host "Synced to Cloud Drive (Latest): $destFile" -ForegroundColor Green
             }
         } catch {
             Write-Host "Sync to $cDir failed: $_" -ForegroundColor Yellow
