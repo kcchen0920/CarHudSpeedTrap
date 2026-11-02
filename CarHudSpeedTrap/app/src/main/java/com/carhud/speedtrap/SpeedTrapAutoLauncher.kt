@@ -159,8 +159,11 @@ object SpeedTrapAutoLauncher {
                 return
             }
 
-            // 開機階段絕不執行強制壓回桌面 (避免與系統開機啟動競爭造成開關閃爍與 WindowManager assertion)
-            if (bringHomeToFront && !isBoot) {
+            // 自動喚醒（非手動強制）一律在神盾冷啟動後退回桌面，讓神盾僅在背景常駐、不佔用前景。
+            // 開機階段延長等待至 8 秒，避開與系統開機啟動競爭造成的閃爍與 WindowManager assertion。
+            val returnToHome = !forceLaunch
+            val returnDelayMs = if (isBoot) 8000L else 2800L
+            if (returnToHome) {
                 Handler(Looper.getMainLooper()).postDelayed({
                     val homeIntent = Intent(Intent.ACTION_MAIN).apply {
                         addCategory(Intent.CATEGORY_HOME)
@@ -172,7 +175,7 @@ object SpeedTrapAutoLauncher {
                     } catch (e: Exception) {
                         Log.w(TAG, "壓回桌面失敗: ${e.message}")
                     }
-                }, 2800L)
+                }, returnDelayMs)
             }
         }
     }

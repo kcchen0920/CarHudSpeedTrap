@@ -15,7 +15,7 @@ import kotlin.math.roundToInt
 
 /**
  * 方案 6.1：車載—客廳即時抵達聯動 (Car-to-Living-Room ETA) 管理器
- * 當車輛進入住家 10 公里範圍並朝住家前進時，透過 ntfy.sh 免費通道即時通知客廳電視 Chromebox-TV-Home。
+ * 當車輛進入住家 5 公里範圍並朝住家前進時，透過 ntfy.sh 免費通道即時通知客廳電視 Chromebox-TV-Home。
  */
 object CarHomeEtaManager {
 
@@ -27,9 +27,9 @@ object CarHomeEtaManager {
     const val KEY_HOME_CHANNEL = "home_channel"
     const val DEFAULT_CHANNEL = "kcchen-family-livingroom"
 
-    private const val APPROACHING_THRESHOLD_METERS = 10_000f // 10 km 接近門檻
+    private const val APPROACHING_THRESHOLD_METERS = 5_000f // 5 km 接近門檻
     private const val ARRIVED_THRESHOLD_METERS = 500f        // 500 m 到家門檻
-    private const val RESET_THRESHOLD_METERS = 15_000f       // 15 km 重設行程
+    private const val RESET_THRESHOLD_METERS = 8_000f        // 8 km 重設行程
 
     private var hasNotifiedApproaching = false
     private var hasNotifiedArrived = false
@@ -89,7 +89,7 @@ object CarHomeEtaManager {
         val distanceMeters = currentLocation.distanceTo(homeLoc)
         val now = System.currentTimeMillis()
 
-        // 離開 15 公里以外，重設行程旗標
+        // 離開 8 公里以外，重設行程旗標
         if (distanceMeters > RESET_THRESHOLD_METERS) {
             if (hasNotifiedApproaching || hasNotifiedArrived) {
                 Log.d(TAG, "車輛已遠離住家 (${distanceMeters.toInt()}m)，重設單次返家狀態")
@@ -104,7 +104,7 @@ object CarHomeEtaManager {
         val isMovingCloser = lastDistanceMeters < 0 || distanceMeters < (lastDistanceMeters + 150f)
         lastDistanceMeters = distanceMeters
 
-        // 1. 觸發「即將抵達 (接近中)」事件：進入 10 公里且朝住家前進
+        // 1. 觸發「即將抵達 (接近中)」事件：進入 5 公里且朝住家前進
         if (distanceMeters <= APPROACHING_THRESHOLD_METERS && distanceMeters > ARRIVED_THRESHOLD_METERS) {
             if (!hasNotifiedApproaching && isMovingCloser) {
                 // 冷卻防抖 (30 分鐘內不重複發送接近通知)

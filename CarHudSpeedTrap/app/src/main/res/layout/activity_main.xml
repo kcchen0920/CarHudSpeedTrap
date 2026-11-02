@@ -478,7 +478,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="進入住家 10 公里範圍時，自動通報客廳電視 Chromebox-TV-Home 顯示抵達時間與溫馨卡片"
+            android:text="進入住家 5 公里範圍時，自動通報客廳電視 Chromebox-TV-Home 顯示抵達時間與溫馨卡片"
             android:textColor="#94A3B8"
             android:textSize="12sp" />
 
