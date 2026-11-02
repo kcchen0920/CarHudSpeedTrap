@@ -31,6 +31,7 @@ $targetApk = Join-Path $scriptRoot "CarHud-debug.apk"
 
 if (Test-Path -LiteralPath $apkOutput) {
     Copy-Item -LiteralPath $apkOutput -Destination $targetApk -Force
+    (Get-Item -LiteralPath $targetApk).LastWriteTime = Get-Date
     Write-Host "Build SUCCESS! Output: $targetApk" -ForegroundColor Green
 
     # 自動同步至 Google 雲端硬碟 (G:\我的雲端硬碟\車用 & D:\文件\car)
@@ -56,6 +57,11 @@ if (Test-Path -LiteralPath $apkOutput) {
                     $timeTag = $oldApk.LastWriteTime.ToString("yyyyMMdd_HHmmss")
                     $backupName = "$($oldApk.BaseName)_$timeTag$($oldApk.Extension)"
                     $backupDest = Join-Path $backupDir $backupName
+                    if (Test-Path -LiteralPath $backupDest) {
+                        $nowTag = (Get-Date -Format "yyyyMMdd_HHmmss")
+                        $backupName = "$($oldApk.BaseName)_$nowTag$($oldApk.Extension)"
+                        $backupDest = Join-Path $backupDir $backupName
+                    }
                     Move-Item -LiteralPath $oldApk.FullName -Destination $backupDest -Force -ErrorAction SilentlyContinue
                     Write-Host "Archived old APK to: $backupDest" -ForegroundColor Yellow
                 }
