@@ -130,18 +130,8 @@ class SpeedTrapListenerService : NotificationListenerService() {
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                     val comp = ComponentName(context, SpeedTrapListenerService::class.java)
-                    val pm = context.packageManager
-                    pm.setComponentEnabledSetting(
-                        comp,
-                        PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-                        PackageManager.DONT_KILL_APP
-                    )
-                    pm.setComponentEnabledSetting(
-                        comp,
-                        PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
-                        PackageManager.DONT_KILL_APP
-                    )
-                    Log.d(TAG, "已觸發 NotificationListener 強制重連")
+                    NotificationListenerService.requestRebind(comp)
+                    Log.d(TAG, "已透過 requestRebind 觸發 NotificationListener 安全重連")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "forceRebind 失敗: ${e.message}")

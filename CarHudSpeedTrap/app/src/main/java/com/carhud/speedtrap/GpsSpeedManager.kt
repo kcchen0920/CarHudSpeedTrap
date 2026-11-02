@@ -8,13 +8,14 @@ import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Bundle
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
 
 /**
  * 車載 GPS 高頻即時測速引擎 (每 0.5s 刷新)
  * 解決車機晶片未提供 location.hasSpeed() 的 0 時速問題，
- * 支援座標位移微分演算法 (距離/時間推算)、多重 Provider 容錯 (GPS + Network) 及診斷資訊回報。
+ * 支援硬體單調時脈座標位移微分演算法 (距離/時間推算)、獨立 GPS 測速與 Network 備援定位及診斷資訊回報。
  */
 object GpsSpeedManager {
 
@@ -34,10 +35,15 @@ object GpsSpeedManager {
 
     private var appContext: Context? = null
     private var locationManager: LocationManager? = null
-    private var isListening = false
+    private var isGpsRegistered = false
+    private var isNetworkRegistered = false
 
-    private var lastLocation: Location? = null
-    private var lastLocationTimeMs: Long = 0L
+    // 專屬於 GPS 的最後座標與硬體單調時間戳記 (SystemClock.elapsedRealtime 防止整秒截斷與時鐘跳變)
+    private var lastGpsLocation: Location? = null
+    private var lastGpsLocationElapsed: Long = 0L
+
+    // 記錄最後一次收到 GPS 回呼的單調時間戳記
+    private var lastGpsCallbackElapsed: Long = 0L
 
     // 供 UI / MainActivity / HUD 監聽 GPS 狀態更新 (支援多觀察者防護)
     var onGpsSpeedUpdated: ((speed: Int, desc: String) -> Unit)? = null
@@ -59,53 +65,16 @@ object GpsSpeedManager {
         }
     }
 
-    @Volatile
-    private var isLowPowerMode = false
-    private var zeroSpeedCount = 0
-
-    private fun checkAdaptiveThrottling(speedKmh: Int) {
-        if (speedKmh == 0) {
-            zeroSpeedCount++
-            if (zeroSpeedCount >= 25 && !isLowPowerMode) { // 靜止約 12.5 秒
-                applyLocationInterval(2000L, 3f)
-                isLowPowerMode = true
-                Log.d(TAG, "⚡ 車輛靜止停等，切換為節能 GPS 採樣 (2000ms)")
-            }
-        } else {
-            if (isLowPowerMode) {
-                applyLocationInterval(500L, 0f)
-                isLowPowerMode = false
-                Log.d(TAG, "🚗 車輛起步移動，立即切換為高敏即時 GPS 採樣 (500ms)")
-            }
-            zeroSpeedCount = 0
-        }
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun applyLocationInterval(intervalMs: Long, minDistanceM: Float) {
-        val lm = locationManager ?: return
-        try {
-            if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                lm.requestLocationUpdates(
-                    LocationManager.GPS_PROVIDER,
-                    intervalMs,
-                    minDistanceM,
-                    singleLocationListener,
-                    Looper.getMainLooper()
-                )
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "動態切換 GPS 採樣率失敗: ${e.message}")
-        }
-    }
-
-    private val singleLocationListener = object : LocationListener {
+    /**
+     * 專用 GPS 測速監聽器：專責處理高頻 500ms 即時車速與相機倒數連動
+     */
+    private val gpsLocationListener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
             isGpsActive = true
+            lastGpsCallbackElapsed = SystemClock.elapsedRealtime()
 
             val speedKmh = calculateSpeed(location)
             currentGpsSpeed = speedKmh
-            checkAdaptiveThrottling(speedKmh)
 
             val accuracy = if (location.hasAccuracy()) "±${location.accuracy.toInt()}m" else "未知"
             lastLocationDesc = String.format(
@@ -149,9 +118,56 @@ object GpsSpeedManager {
     }
 
     /**
+     * 獨立 Network 輔助監聽器：室內、地下室或隧道備援，絕不污染 GPS 差分時速
+     */
+    private val networkLocationListener = object : LocationListener {
+        override fun onLocationChanged(location: Location) {
+            val nowElapsed = SystemClock.elapsedRealtime()
+            // 若 6 秒內已有 GPS 訊號，以 GPS 為主，不覆蓋資訊
+            if (isGpsActive && (nowElapsed - lastGpsCallbackElapsed) < 6000L) {
+                return
+            }
+
+            val accuracy = if (location.hasAccuracy()) "±${location.accuracy.toInt()}m" else "未知"
+            lastLocationDesc = String.format(
+                "經度: %.4f | 緯度: %.4f (精確度: %s | 來源: %s 備援)",
+                location.longitude,
+                location.latitude,
+                accuracy,
+                location.provider ?: "Network"
+            )
+
+            // 若目前 GPS 無法取得速度，可採用 Network 原生回傳之速度（若有的話）
+            if (location.hasSpeed() && location.speed > 0f) {
+                val speedKmh = (location.speed * 3.6f).toInt()
+                currentGpsSpeed = speedKmh
+                lastSpeedSource = "基站/網路原生速度"
+
+                val curData = SpeedTrapListenerService.latestData
+                val updatedData = curData.copy(currentSpeed = speedKmh)
+                SpeedTrapListenerService.latestData = updatedData
+                SpeedTrapListenerService.dispatchDataUpdated(updatedData)
+                dispatchGpsSpeed(speedKmh, lastLocationDesc)
+            } else {
+                dispatchGpsSpeed(currentGpsSpeed, lastLocationDesc)
+            }
+
+            appContext?.let { ctx ->
+                CarHomeEtaManager.onLocationUpdated(ctx, location, currentGpsSpeed)
+            }
+        }
+
+        @Deprecated("Deprecated in Java")
+        override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+        override fun onProviderEnabled(provider: String) {}
+        override fun onProviderDisabled(provider: String) {}
+    }
+
+    /**
      * 計算即時車速：
-     * 1. 優先使用原生 location.speed (m/s * 3.6)
-     * 2. 若車機晶片未傳回 speed (location.hasSpeed() == false)，採用相鄰經緯度座標差與時間差推算真實速度
+     * 1. 優先使用晶片原生 location.speed (m/s * 3.6)
+     * 2. 若車機晶片未傳回 speed (location.hasSpeed() == false)，採用硬體單調時脈 (SystemClock.elapsedRealtime)
+     *    相鄰經緯度座標差與毫秒時間差推算真實速度，杜絕 NMEA 整秒 UTC 截斷造成的除以零與跳變問題。
      */
     private fun calculateSpeed(location: Location): Int {
         // 原生速度判定
@@ -160,17 +176,17 @@ object GpsSpeedManager {
             return (location.speed * 3.6f).toInt()
         }
 
-        // 經緯度微分推算備援
-        val prev = lastLocation
-        val prevTime = lastLocationTimeMs
-        val now = if (location.time > 0) location.time else System.currentTimeMillis()
+        // 經緯度微分推算備援 (使用硬體單調時鐘)
+        val prev = lastGpsLocation
+        val prevElapsed = lastGpsLocationElapsed
+        val nowElapsed = SystemClock.elapsedRealtime()
 
-        lastLocation = location
-        lastLocationTimeMs = now
+        lastGpsLocation = location
+        lastGpsLocationElapsed = nowElapsed
 
-        if (prev != null && prevTime > 0) {
-            val dtSec = (now - prevTime) / 1000.0
-            if (dtSec in 0.3..6.0) {
+        if (prev != null && prevElapsed > 0L) {
+            val dtSec = (nowElapsed - prevElapsed) / 1000.0
+            if (dtSec in 0.2..10.0) {
                 val distMeters = location.distanceTo(prev)
                 val calcSpeed = (distMeters / dtSec) * 3.6
                 // 濾除靜止時的 GPS 座標抖動 (若車速小於 2km/h 視為 0)
@@ -181,12 +197,12 @@ object GpsSpeedManager {
             }
         }
 
-        lastSpeedSource = "靜止或無速度"
+        lastSpeedSource = if (location.hasSpeed()) "晶片原生靜止 (0 km/h)" else "靜止或無速度"
         return 0
     }
 
     /**
-     * 啟動車載 GPS 即時測速監聽 (支援 GPS + Network 雙軌容錯)
+     * 啟動車載 GPS 即時測速監聽 (全時 500ms 高頻刷新，0 米無死角採樣)
      */
     @SuppressLint("MissingPermission")
     fun startListening(context: Context) {
@@ -202,50 +218,54 @@ object GpsSpeedManager {
             return
         }
 
-        if (isListening) return
-
         try {
-            locationManager = appContext?.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
             if (locationManager == null) {
+                locationManager = appContext?.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            }
+            val lm = locationManager
+            if (lm == null) {
                 Log.e(TAG, "無法取得 LocationManager")
                 return
             }
 
-            // 1. 註冊 GPS_PROVIDER (高頻率 500ms 刷新)
-            if (locationManager?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true) {
-                locationManager?.requestLocationUpdates(
-                    LocationManager.GPS_PROVIDER,
-                    500L,
-                    0f,
-                    singleLocationListener,
-                    Looper.getMainLooper()
-                )
-                Log.i(TAG, "✓ GPS_PROVIDER 已啟動監聽 (每 500ms)")
+            // 1. 註冊 GPS_PROVIDER (全時 500ms 高頻率、0 米無死角刷新)
+            if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                if (!isGpsRegistered) {
+                    lm.requestLocationUpdates(
+                        LocationManager.GPS_PROVIDER,
+                        500L,
+                        0f,
+                        gpsLocationListener,
+                        Looper.getMainLooper()
+                    )
+                    isGpsRegistered = true
+                    Log.i(TAG, "✓ GPS_PROVIDER 已啟動全時監聽 (每 500ms)")
+                }
             } else {
                 Log.w(TAG, "車機 GPS_PROVIDER 尚未開啟")
             }
 
             // 2. 註冊 NETWORK_PROVIDER (輔助定位與室內/隧道備援)
-            if (locationManager?.isProviderEnabled(LocationManager.NETWORK_PROVIDER) == true) {
-                locationManager?.requestLocationUpdates(
-                    LocationManager.NETWORK_PROVIDER,
-                    1000L,
-                    0f,
-                    singleLocationListener,
-                    Looper.getMainLooper()
-                )
-                Log.i(TAG, "✓ NETWORK_PROVIDER 已啟動輔助監聽")
+            if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                if (!isNetworkRegistered) {
+                    lm.requestLocationUpdates(
+                        LocationManager.NETWORK_PROVIDER,
+                        2000L,
+                        0f,
+                        networkLocationListener,
+                        Looper.getMainLooper()
+                    )
+                    isNetworkRegistered = true
+                    Log.i(TAG, "✓ NETWORK_PROVIDER 已啟動輔助監聽")
+                }
             }
 
             // 3. 嘗試讀取最後一次已知座標以快速就緒
-            val lastGps = locationManager?.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-                ?: locationManager?.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
-            if (lastGps != null) {
-                singleLocationListener.onLocationChanged(lastGps)
+            val lastGps = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                ?: lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+            if (lastGps != null && lastGpsLocation == null) {
+                gpsLocationListener.onLocationChanged(lastGps)
             }
-
-            isListening = true
-            Log.i(TAG, "✓ 原生 GPS 即時車速引擎已全面啟動")
         } catch (e: Exception) {
             Log.e(TAG, "啟動 GPS 失敗: ${e.message}")
         }
@@ -255,10 +275,17 @@ object GpsSpeedManager {
      * 停止監聽
      */
     fun stopListening() {
-        if (isListening && locationManager != null) {
+        val lm = locationManager
+        if (lm != null) {
             try {
-                locationManager?.removeUpdates(singleLocationListener)
-                isListening = false
+                if (isGpsRegistered) {
+                    lm.removeUpdates(gpsLocationListener)
+                    isGpsRegistered = false
+                }
+                if (isNetworkRegistered) {
+                    lm.removeUpdates(networkLocationListener)
+                    isNetworkRegistered = false
+                }
                 Log.i(TAG, "已停止 GPS 車速監聽")
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -288,7 +315,7 @@ object GpsSpeedManager {
             )
         }
 
-        SpeedTrapListenerService.onDataUpdated?.invoke(updatedData)
-        onGpsSpeedUpdated?.invoke(speedKmh, lastLocationDesc)
+        SpeedTrapListenerService.dispatchDataUpdated(updatedData)
+        dispatchGpsSpeed(speedKmh, lastLocationDesc)
     }
 }

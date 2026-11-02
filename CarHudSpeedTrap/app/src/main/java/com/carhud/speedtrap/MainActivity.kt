@@ -153,7 +153,7 @@ class MainActivity : AppCompatActivity() {
             )
             SpeedTrapListenerService.latestData = testData
             CarHudWidgetProvider.updateWidgetData(this, 50, 350, 48, "固定測速")
-            SpeedTrapListenerService.onDataUpdated?.invoke(testData)
+            SpeedTrapListenerService.dispatchDataUpdated(testData)
             Toast.makeText(this, "已推送正常數據：速限 50 / 車速 48 / 距 350m", Toast.LENGTH_SHORT).show()
             updateDiagnosticPanel()
         }
@@ -168,7 +168,7 @@ class MainActivity : AppCompatActivity() {
             )
             SpeedTrapListenerService.latestData = testData
             CarHudWidgetProvider.updateWidgetData(this, 50, 180, 68, "⚠️ 超速！固定測速")
-            SpeedTrapListenerService.onDataUpdated?.invoke(testData)
+            SpeedTrapListenerService.dispatchDataUpdated(testData)
             Toast.makeText(this, "已推送超速數據：速限 50 / 車速 68 / 距 180m", Toast.LENGTH_SHORT).show()
             updateDiagnosticPanel()
         }
@@ -503,10 +503,17 @@ class MainActivity : AppCompatActivity() {
         updateDiagnosticPanel()
         updateSpeedTrapLabel(findViewById(R.id.tv_current_speedtrap_pkg))
 
-        // 啟動 GPS 監聽
+        // 啟動 GPS 監聽 (全時即時高頻測速)
         GpsSpeedManager.startListening(this)
 
-        // 若已獲取通知存取權但尚未連線，自動嘗試 forceRebind
+        // 前台自動確保神盾運行 (前台喚醒不受 Android 10+ BAL 後台限制)
+        val prefs = getSharedPreferences(BootReceiver.PREF_NAME, Context.MODE_PRIVATE)
+        val autoStartSpeedTrap = prefs.getBoolean(BootReceiver.KEY_AUTO_START_SPEEDTRAP, true)
+        if (autoStartSpeedTrap && !SpeedTrapListenerService.isSpeedTrapActive(this)) {
+            SpeedTrapAutoLauncher.startSpeedTrapIfNeeded(this, bringHomeToFront = false)
+        }
+
+        // 若已獲取通知存取權但尚未連線，自動嘗試安全 requestRebind
         val hasNotification = NotificationManagerCompat.getEnabledListenerPackages(this).contains(packageName)
         if (hasNotification && !SpeedTrapListenerService.isConnected) {
             SpeedTrapListenerService.forceRebind(this)

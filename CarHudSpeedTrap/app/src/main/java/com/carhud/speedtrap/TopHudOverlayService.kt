@@ -20,6 +20,8 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.TextView
 import android.widget.Toast
+import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import kotlin.math.hypot
@@ -161,9 +163,26 @@ class TopHudOverlayService : Service() {
             .build()
 
         try {
-            startForeground(1001, notification)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val hasLocationPerm = ContextCompat.checkSelfPermission(
+                    this,
+                    android.Manifest.permission.ACCESS_FINE_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED
+                val fgsType = if (hasLocationPerm) {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                } else {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                }
+                startForeground(1001, notification, fgsType)
+            } else {
+                startForeground(1001, notification)
+            }
         } catch (e: Exception) {
-            e.printStackTrace()
+            try {
+                startForeground(1001, notification)
+            } catch (ex: Exception) {
+                Log.w(TAG, "startForeground fallback 失敗: ${ex.message}")
+            }
         }
     }
 
@@ -303,8 +322,9 @@ class TopHudOverlayService : Service() {
         updateOverlayUi(data)
     }
 
-    private val speedListener: (Int, String) -> Unit = { _, _ ->
-        updateOverlayUi(SpeedTrapListenerService.latestData)
+    private val speedListener: (Int, String) -> Unit = { speed, _ ->
+        val cur = SpeedTrapListenerService.latestData
+        updateOverlayUi(cur.copy(currentSpeed = speed))
     }
 
     /**
