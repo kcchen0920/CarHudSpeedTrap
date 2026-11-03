@@ -3,21 +3,50 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
+def getGitCommitCount() {
+    try {
+        def stdout = new ByteArrayOutputStream()
+        exec {
+            commandLine 'git', 'rev-list', '--count', 'HEAD'
+            standardOutput = stdout
+        }
+        return 100 + stdout.toString().trim().toInteger()
+    } catch (Exception ignored) {
+        return 101
+    }
+}
+
 android {
     namespace 'com.carhud.speedtrap'
     compileSdk 34
+
+    signingConfigs {
+        config {
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+            storeFile file('carhud.keystore')
+            storePassword 'android'
+            v1SigningEnabled true
+            v2SigningEnabled true
+        }
+    }
 
     defaultConfig {
         applicationId "com.carhud.speedtrap"
         minSdk 24
         targetSdk 34
-        versionCode 1
-        versionName "1.0.0"
+        versionCode getGitCommitCount()
+        versionName "1.1.${getGitCommitCount()}"
+        signingConfig signingConfigs.config
     }
 
     buildTypes {
+        debug {
+            signingConfig signingConfigs.config
+        }
         release {
             minifyEnabled false
+            signingConfig signingConfigs.config
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
