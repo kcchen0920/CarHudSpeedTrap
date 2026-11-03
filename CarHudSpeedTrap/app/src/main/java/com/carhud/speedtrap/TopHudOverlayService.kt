@@ -397,8 +397,14 @@ class TopHudOverlayService : Service() {
             val badge = circleBadge
             val tvExpandedInfo = overlayView?.findViewById<TextView>(R.id.tv_expanded_info)
 
-            // 即時車速優先採用 GPS 速度
-            val currentSpeed = if (GpsSpeedManager.currentGpsSpeed > 0) GpsSpeedManager.currentGpsSpeed else data.currentSpeed
+            // 即時車速優先採用 GPS 速度 (若 GPS 啟用中則以 GPS 為準，包含靜止 0 km/h)
+            val currentSpeed = if (GpsSpeedManager.isGpsActive) {
+                GpsSpeedManager.currentGpsSpeed
+            } else if (GpsSpeedManager.currentGpsSpeed > 0) {
+                GpsSpeedManager.currentGpsSpeed
+            } else {
+                data.currentSpeed
+            }
             tvSpeed?.text = currentSpeed.toString()
 
             // 速限圓圈：有速限時顯示紅外框數字，無速限時隱藏
@@ -416,37 +422,45 @@ class TopHudOverlayService : Service() {
                 tvSub?.text = "km/h"
             }
 
-            // 三段動態警示色 (安全/注意/超速警戒)
+            // 五段動態警示色 (嚴重超速紅 / 輕微超速橘 / 相機近逼黃 / 相機警示金 / 正常巡航青白)
             val isOverSpeed = data.speedLimit > 0 && currentSpeed > data.speedLimit
             val overDiff = if (isOverSpeed) currentSpeed - data.speedLimit else 0
+            val isApproachingCam = data.distanceMeters > 0 || (data.speedLimit > 0 && data.camType.isNotEmpty())
 
             when {
-                // 1. 嚴重超速 (> 5 km/h)
+                // 1. 嚴重超速 (> 5 km/h) -> 鮮紅爆閃警戒
                 overDiff > 5 -> {
                     tvSpeed?.setTextColor(0xFFEF4444.toInt()) // 亮紅
                     tvSub?.setTextColor(0xFFEF4444.toInt())
                     badge?.setBackgroundResource(R.drawable.bg_hud_circle_alert)
-                    tvExpandedInfo?.text = "⚠️ 嚴重超速！${data.camType} ${data.distanceMeters}m (限速${data.speedLimit})"
+                    tvExpandedInfo?.text = "⚠️ 嚴重超速！${data.camType} ${if (data.distanceMeters > 0) "${data.distanceMeters}m " else ""}(限速${data.speedLimit})"
                     tvExpandedInfo?.setTextColor(0xFFEF4444.toInt())
                 }
-                // 2. 輕微超速 (1 ~ 5 km/h)
+                // 2. 輕微超速 (1 ~ 5 km/h) -> 警示橙色
                 isOverSpeed -> {
-                    tvSpeed?.setTextColor(0xFFF59E0B.toInt()) // 琥珀橘
-                    tvSub?.setTextColor(0xFFF59E0B.toInt())
+                    tvSpeed?.setTextColor(0xFFF97316.toInt()) // 橙色
+                    tvSub?.setTextColor(0xFFF97316.toInt())
                     badge?.setBackgroundResource(R.drawable.bg_hud_circle_warning)
-                    tvExpandedInfo?.text = "⚠️ 請注意車速！${data.camType} ${data.distanceMeters}m (限速${data.speedLimit})"
+                    tvExpandedInfo?.text = "⚠️ 請減速！${data.camType} ${if (data.distanceMeters > 0) "${data.distanceMeters}m " else ""}(限速${data.speedLimit})"
+                    tvExpandedInfo?.setTextColor(0xFFF97316.toInt())
+                }
+                // 3. 相機緊急近逼 (距離 <= 300m) -> 鮮黃外框與高亮文字
+                isApproachingCam && data.distanceMeters in 1..300 -> {
+                    tvSpeed?.setTextColor(0xFFFDE047.toInt()) // 鮮黃
+                    tvSub?.setTextColor(0xFFF59E0B.toInt()) // 琥珀橘
+                    badge?.setBackgroundResource(R.drawable.bg_hud_circle_warning)
+                    tvExpandedInfo?.text = "📷 相機近逼！${data.camType} ${data.distanceMeters}m (限速${data.speedLimit})"
                     tvExpandedInfo?.setTextColor(0xFFF59E0B.toInt())
                 }
-                // 3. 相機接近中
-                data.distanceMeters > 0 -> {
-                    tvSpeed?.setTextColor(0xFFFFFFFF.toInt())
-                    val subColor = if (data.distanceMeters < 300) 0xFFF59E0B.toInt() else 0xFF00F2FE.toInt()
-                    tvSub?.setTextColor(subColor)
-                    badge?.setBackgroundResource(R.drawable.bg_hud_circle)
-                    tvExpandedInfo?.text = "📷 ${data.camType} ${data.distanceMeters}m (限速${data.speedLimit})"
-                    tvExpandedInfo?.setTextColor(0xFF00F2FE.toInt())
+                // 4. 偵測到前方測速相機 (距離 > 300m) -> 科技金黃外框
+                isApproachingCam -> {
+                    tvSpeed?.setTextColor(0xFF67E8F9.toInt()) // 亮霓虹青
+                    tvSub?.setTextColor(0xFFFBBF24.toInt()) // 金黃距離
+                    badge?.setBackgroundResource(R.drawable.bg_hud_circle_cam)
+                    tvExpandedInfo?.text = "📷 前方測速：${data.camType} ${if (data.distanceMeters > 0) "${data.distanceMeters}m " else ""}(限速${data.speedLimit})"
+                    tvExpandedInfo?.setTextColor(0xFFFBBF24.toInt())
                 }
-                // 4. 路況順暢
+                // 5. 一般正常巡航 -> 經典夜空黑/青光外框
                 else -> {
                     tvSpeed?.setTextColor(0xFFFFFFFF.toInt())
                     tvSub?.setTextColor(0xFF00F2FE.toInt())

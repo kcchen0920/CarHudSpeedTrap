@@ -81,7 +81,8 @@ class SpeedTrapListenerService : NotificationListenerService() {
         private val PATTERN_PREFIX_KM = Pattern.compile("(?:前方|距離|距|剩餘)\\s*(\\d+)\\s*(?:公里|km)", Pattern.CASE_INSENSITIVE)
         private val PATTERN_METERS = Pattern.compile("(\\d+)\\s*(?:公尺|米)", Pattern.CASE_INSENSITIVE)
         private val PATTERN_METERS_STANDALONE = Pattern.compile("(?<!(?:km|kp)/)\\b(\\d{2,4})\\s*m\\b", Pattern.CASE_INSENSITIVE)
-        private val PATTERN_SPEED = Pattern.compile("(?:目前時速|目前車速|目前速度|車速|速度|目前)\\s*[:：=]?\\s*(\\d{1,3})")
+        private val PATTERN_SPEED = Pattern.compile("(?:目前時速|目前車速|目前速度|行車速度|即時時速|車速|速度|時速|目前)\\s*[:：=]?\\s*(\\d{1,3})")
+        private val PATTERN_SPEED_UNIT = Pattern.compile("(?:^|[\\s,;|(])(\\d{1,3})\\s*(?:km/h|kph|公里/小時|公里/h)", Pattern.CASE_INSENSITIVE)
         private val PATTERN_EXPLICIT_LIMIT = Pattern.compile("(?:限速|速限|限制時速|速限值|時速限制|最高速限|道路速限|法定速限|速限為|限速為)\\s*[:：=]?\\s*(\\d{2,3})")
         private val PATTERN_CAM_FOLLOWED_LIMIT = Pattern.compile("(?:固定測速|固定照相|固定式|區間測速|區間起點|區間終點|流動測速|流動照相|科技執法|違規取締|測速照相|測速|照相)\\s*[:：=\\s-]*[\\[(（]?\\s*(\\d{2,3})\\s*(?:公里|km/h|km|kph)?[\\])）]?")
         private val PATTERN_BRACKET_LIMIT = Pattern.compile("[\\[(（]\\s*(\\d{2,3})\\s*(?:公里|km/h|kph)?[\\])）]\\s*(?:固定|測速|照相|區間|科技執法|流動)")
@@ -235,8 +236,10 @@ class SpeedTrapListenerService : NotificationListenerService() {
                         contentBuilder.append(value).append(" ")
                     } else if (value is Number) {
                         val keyLower = key.lowercase(Locale.ROOT)
-                        if (keyLower.contains("limit") || keyLower.contains("speed")) {
+                        if (keyLower.contains("limit")) {
                             contentBuilder.append(" 速限 ").append(value).append(" ")
+                        } else if (keyLower.contains("speed") || keyLower.contains("velocity") || keyLower.contains("kph")) {
+                            contentBuilder.append(" 目前時速 ").append(value).append(" ")
                         } else if (keyLower.contains("dist")) {
                             contentBuilder.append(" 距離 ").append(value).append("m ")
                         }
@@ -255,13 +258,13 @@ class SpeedTrapListenerService : NotificationListenerService() {
 
         val parsedData = parseNotificationContent(rawContent)
 
-        // 雙軌時速融合：若 GPS 原生已有車速且大於 0，優先保留高頻 GPS 車速；若 GPS 搜尋中則採用神盾解析時速
-        val effectiveSpeed = if (GpsSpeedManager.currentGpsSpeed > 0) {
+        // 雙軌時速融合：若 GPS 定位運作中，優先採用高頻 GPS 車速；若 GPS 搜尋中則採用神盾解析時速
+        val effectiveSpeed = if (GpsSpeedManager.isGpsActive) {
             GpsSpeedManager.currentGpsSpeed
         } else if (parsedData.currentSpeed > 0) {
             parsedData.currentSpeed
         } else {
-            0
+            GpsSpeedManager.currentGpsSpeed
         }
 
         val finalData = parsedData.copy(currentSpeed = effectiveSpeed)
@@ -377,6 +380,16 @@ class SpeedTrapListenerService : NotificationListenerService() {
                 val s = speedMatcher.group(1)?.toIntOrNull() ?: 0
                 if (s in 0..250) {
                     speed = s
+                }
+            }
+            if (speed == 0) {
+                val unitSpeedMatcher = PATTERN_SPEED_UNIT.matcher(content)
+                while (unitSpeedMatcher.find()) {
+                    val s = unitSpeedMatcher.group(1)?.toIntOrNull() ?: 0
+                    if (s in 1..250 && s != dist) {
+                        speed = s
+                        break
+                    }
                 }
             }
 
