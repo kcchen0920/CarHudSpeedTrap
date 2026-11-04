@@ -49,10 +49,14 @@ object GpsSpeedManager {
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    // 逾時安全看門狗：若超過 4.5 秒無任何定位訊號且車速大於 0，自動將時速歸零，避免儀表卡死在非零時速
+    // 逾時安全看門狗與自癒巡檢：
+    // 1. 若超過 4.5 秒無任何定位訊號且車速大於 0，自動將時速歸零，避免儀表卡死在非零時速
+    // 2. 若開機後 GPS / Passive 尚未註冊成功，每 3 秒自動重試掛鉤，解決車機硬體冷啟動延遲通電問題！
     private val watchdogRunnable = object : Runnable {
         override fun run() {
             val now = SystemClock.elapsedRealtime()
+
+            // 1. 逾時歸零防護
             if (lastGpsCallbackElapsed > 0L && (now - lastGpsCallbackElapsed) > 4500L) {
                 if (currentGpsSpeed > 0) {
                     currentGpsSpeed = 0
@@ -74,7 +78,15 @@ object GpsSpeedManager {
                     }
                 }
             }
-            mainHandler.postDelayed(this, 2000L)
+
+            // 2. 開機硬體延遲自癒：若 GPS 未成功註冊或尚未進入活躍狀態，持續嘗試掛鉤
+            if (!isGpsRegistered || !isPassiveRegistered || !isGpsActive) {
+                appContext?.let { ctx ->
+                    tryRegisterProviders(ctx)
+                }
+            }
+
+            mainHandler.postDelayed(this, 3000L)
         }
     }
 
@@ -237,10 +249,18 @@ object GpsSpeedManager {
     /**
      * 啟動車載 GPS 即時測速監聽 (全時 500ms 高頻刷新，掛鉤 GPS、Passive 與 Network)
      */
-    @SuppressLint("MissingPermission")
     fun startListening(context: Context) {
         appContext = context.applicationContext
+        tryRegisterProviders(context)
+        mainHandler.removeCallbacks(watchdogRunnable)
+        mainHandler.post(watchdogRunnable)
+    }
 
+    /**
+     * 核心提供者註冊引擎 (支援車機冷啟動延遲重試與開機自癒)
+     */
+    @SuppressLint("MissingPermission")
+    private fun tryRegisterProviders(context: Context) {
         val hasFine = ContextCompat.checkSelfPermission(
             context,
             android.Manifest.permission.ACCESS_FINE_LOCATION
@@ -258,7 +278,7 @@ object GpsSpeedManager {
 
         try {
             if (locationManager == null) {
-                locationManager = appContext?.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+                locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
             }
             val lm = locationManager
             if (lm == null) {
@@ -266,52 +286,43 @@ object GpsSpeedManager {
                 return
             }
 
-            val allProviders = lm.allProviders ?: emptyList()
-
             // 1. 註冊 GPS_PROVIDER (全時 500ms 高頻率、0 米無死角刷新)
-            if (hasFine && allProviders.contains(LocationManager.GPS_PROVIDER)) {
+            // 核心關鍵修正：不阻擋在 isProviderEnabled，車機通電開機時立即掛鉤，待晶片啟動直接生效
+            if (hasFine && !isGpsRegistered) {
                 try {
-                    if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                        if (!isGpsRegistered) {
-                            lm.requestLocationUpdates(
-                                LocationManager.GPS_PROVIDER,
-                                500L,
-                                0f,
-                                gpsLocationListener,
-                                Looper.getMainLooper()
-                            )
-                            isGpsRegistered = true
-                            Log.i(TAG, "✓ GPS_PROVIDER 已啟動全時監聽 (每 500ms)")
-                        }
-                    } else {
-                        Log.w(TAG, "車機 GPS_PROVIDER 尚未開啟")
-                    }
+                    lm.requestLocationUpdates(
+                        LocationManager.GPS_PROVIDER,
+                        500L,
+                        0f,
+                        gpsLocationListener,
+                        Looper.getMainLooper()
+                    )
+                    isGpsRegistered = true
+                    Log.i(TAG, "✓ GPS_PROVIDER 已啟動全時監聽 (每 500ms)")
                 } catch (e: Exception) {
-                    Log.w(TAG, "註冊 GPS_PROVIDER 異常: ${e.message}")
+                    Log.w(TAG, "註冊 GPS_PROVIDER 暫未成功 (待看門狗自動重試): ${e.message}")
                 }
             }
 
             // 2. 核心增強：註冊 PASSIVE_PROVIDER (承接神盾、Google Maps 與導航王產生的所有定位回呼)
-            if (hasFine && allProviders.contains(LocationManager.PASSIVE_PROVIDER)) {
+            if (hasFine && !isPassiveRegistered) {
                 try {
-                    if (!isPassiveRegistered) {
-                        lm.requestLocationUpdates(
-                            LocationManager.PASSIVE_PROVIDER,
-                            500L,
-                            0f,
-                            gpsLocationListener,
-                            Looper.getMainLooper()
-                        )
-                        isPassiveRegistered = true
-                        Log.i(TAG, "✓ PASSIVE_PROVIDER 已掛鉤 (即時承接神盾 App 座標與車速)")
-                    }
+                    lm.requestLocationUpdates(
+                        LocationManager.PASSIVE_PROVIDER,
+                        500L,
+                        0f,
+                        gpsLocationListener,
+                        Looper.getMainLooper()
+                    )
+                    isPassiveRegistered = true
+                    Log.i(TAG, "✓ PASSIVE_PROVIDER 已掛鉤 (即時承接神盾 App 座標與車速)")
                 } catch (e: Exception) {
-                    Log.w(TAG, "註冊 PASSIVE_PROVIDER 異常: ${e.message}")
+                    Log.w(TAG, "註冊 PASSIVE_PROVIDER 暫未成功: ${e.message}")
                 }
             }
 
             // 3. 註冊 FUSED 提供者 (若車機硬體有支援)
-            if (hasFine && allProviders.contains("fused")) {
+            if (hasFine) {
                 try {
                     lm.requestLocationUpdates(
                         "fused",
@@ -320,58 +331,40 @@ object GpsSpeedManager {
                         gpsLocationListener,
                         Looper.getMainLooper()
                     )
-                    Log.i(TAG, "✓ fused provider 已啟動監聽")
-                } catch (e: Exception) {
-                    // 忽略不支援 fused 的情況
-                }
+                } catch (ignored: Exception) {}
             }
 
             // 4. 註冊 NETWORK_PROVIDER (輔助定位與室內/隧道備援)
-            if (allProviders.contains(LocationManager.NETWORK_PROVIDER)) {
+            if (!isNetworkRegistered) {
                 try {
-                    if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                        if (!isNetworkRegistered) {
-                            lm.requestLocationUpdates(
-                                LocationManager.NETWORK_PROVIDER,
-                                1500L,
-                                0f,
-                                networkLocationListener,
-                                Looper.getMainLooper()
-                            )
-                            isNetworkRegistered = true
-                            Log.i(TAG, "✓ NETWORK_PROVIDER 已啟動輔助監聽")
-                        }
-                    }
+                    lm.requestLocationUpdates(
+                        LocationManager.NETWORK_PROVIDER,
+                        1500L,
+                        0f,
+                        networkLocationListener,
+                        Looper.getMainLooper()
+                    )
+                    isNetworkRegistered = true
+                    Log.i(TAG, "✓ NETWORK_PROVIDER 已啟動輔助監聽")
                 } catch (e: Exception) {
                     Log.w(TAG, "註冊 NETWORK_PROVIDER 異常: ${e.message}")
                 }
             }
 
             // 5. 嘗試讀取最後已知座標以快速就緒
-            val lastGps = try {
+            val lastLoc = try {
                 lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-                    ?: (if (allProviders.contains(LocationManager.PASSIVE_PROVIDER)) lm.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER) else null)
-                    ?: (if (allProviders.contains(LocationManager.NETWORK_PROVIDER)) lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER) else null)
+                    ?: lm.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER)
+                    ?: lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
             } catch (e: Exception) {
                 null
             }
 
-            if (lastGps != null && lastGpsLocation == null) {
-                gpsLocationListener.onLocationChanged(lastGps)
-            }
-
-            // 啟動看門狗計時器
-            mainHandler.removeCallbacks(watchdogRunnable)
-            mainHandler.postDelayed(watchdogRunnable, 3000L)
-
-            // 若開機時 GPS 尚未就緒，3 秒後自動重試確保掛鉤成功
-            if (!isGpsRegistered) {
-                mainHandler.postDelayed({
-                    appContext?.let { startListening(it) }
-                }, 3000L)
+            if (lastLoc != null && lastGpsLocation == null) {
+                gpsLocationListener.onLocationChanged(lastLoc)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "啟動 GPS 失敗: ${e.message}")
+            Log.e(TAG, "註冊 GPS 提供者異常: ${e.message}")
         }
     }
 

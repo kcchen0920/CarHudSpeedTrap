@@ -258,13 +258,11 @@ class SpeedTrapListenerService : NotificationListenerService() {
 
         val parsedData = parseNotificationContent(rawContent)
 
-        // 雙軌時速融合：若 GPS 定位運作中，優先採用高頻 GPS 車速；若 GPS 搜尋中則採用神盾解析時速
-        val effectiveSpeed = if (GpsSpeedManager.isGpsActive) {
-            GpsSpeedManager.currentGpsSpeed
-        } else if (parsedData.currentSpeed > 0) {
-            parsedData.currentSpeed
-        } else {
-            GpsSpeedManager.currentGpsSpeed
+        // 雙軌時速融合：優先採用大於 0 之高頻 GPS 車速，若 GPS 計算中則採用神盾通知車速，確保永不卡死
+        val effectiveSpeed = when {
+            GpsSpeedManager.currentGpsSpeed > 0 -> GpsSpeedManager.currentGpsSpeed
+            parsedData.currentSpeed > 0 -> parsedData.currentSpeed
+            else -> 0
         }
 
         val finalData = parsedData.copy(currentSpeed = effectiveSpeed)

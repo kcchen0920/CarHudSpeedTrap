@@ -42,6 +42,9 @@ class TopHudOverlayService : Service() {
         const val PREF_HUD_SCALE = "hud_scale"
         const val DEFAULT_HUD_SCALE = 1.0f // 預設 100% 縮放比例
 
+        const val PREF_HUD_POS_X = "hud_pos_x"
+        const val PREF_HUD_POS_Y = "hud_pos_y"
+
         var isRunning: Boolean = false
         var currentService: TopHudOverlayService? = null
         var currentScale: Float = DEFAULT_HUD_SCALE
@@ -120,6 +123,23 @@ class TopHudOverlayService : Service() {
         layoutExpandedMenu?.visibility = View.GONE
     }
 
+    // 常駐背景自癒巡檢：每 5 秒確認 GPS 與神盾通知監聽狀態，若受車機冷啟動影響中斷則自動自癒修復
+    private val selfHealingHandler = Handler(Looper.getMainLooper())
+    private val selfHealingRunnable = object : Runnable {
+        override fun run() {
+            if (!isRunning) return
+            // 自癒 1：確保 GPS 監聽常駐活躍 (若尚未啟用或未收到任何定位回呼，自動觸發掛鉤)
+            if (!GpsSpeedManager.isGpsActive) {
+                GpsSpeedManager.startListening(this@TopHudOverlayService)
+            }
+            // 自癒 2：若神盾通知服務連線脫鉤，自動透過 requestRebind 觸發安全重連
+            if (!SpeedTrapListenerService.isConnected) {
+                SpeedTrapListenerService.forceRebind(this@TopHudOverlayService)
+            }
+            selfHealingHandler.postDelayed(this, 5000L)
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -130,6 +150,8 @@ class TopHudOverlayService : Service() {
         initOverlay()
         // 懸浮服務啟動時，立即啟動高精度 GPS 測速引擎
         GpsSpeedManager.startListening(this)
+        // 啟動開機與運行期間背景自癒巡檢
+        selfHealingHandler.postDelayed(selfHealingRunnable, 3000L)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -203,9 +225,13 @@ class TopHudOverlayService : Service() {
         currentScale = prefs.getFloat(PREF_HUD_SCALE, DEFAULT_HUD_SCALE)
 
         val dm = resources.displayMetrics
-        // 初始位置設定在右上角，預留邊距
+        // 優先讀取使用者前次拖曳自訂儲存的位置，若無則預設右上角
+        val savedX = prefs.getInt(PREF_HUD_POS_X, -1)
+        val savedY = prefs.getInt(PREF_HUD_POS_Y, -1)
         val defaultX = dm.widthPixels - (84 * dm.density).toInt()
         val defaultY = (24 * dm.density).toInt()
+        val initialX = if (savedX >= 0) savedX else defaultX.coerceAtLeast(0)
+        val initialY = if (savedY >= 0) savedY else defaultY.coerceAtLeast(0)
 
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -217,8 +243,8 @@ class TopHudOverlayService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = defaultX.coerceAtLeast(0)
-            y = defaultY.coerceAtLeast(0)
+            x = initialX
+            y = initialY
             alpha = hudAlpha // 透明度設定，確保底層地圖/導航清透可視
         }
         overlayParams = params
@@ -258,8 +284,12 @@ class TopHudOverlayService : Service() {
                         isDragging = true
                     }
                     if (isDragging) {
-                        params.x = (initialParamX + dx).coerceIn(0, dm.widthPixels - v.width)
-                        params.y = (initialParamY + dy).coerceIn(0, dm.heightPixels - v.height)
+                        // 即時動態獲取螢幕解析度，防止開機時解析度尚未穩定導致限制在 0 座標
+                        val curDm = resources.displayMetrics
+                        val maxX = (curDm.widthPixels - v.width).coerceAtLeast(0)
+                        val maxY = (curDm.heightPixels - v.height).coerceAtLeast(0)
+                        params.x = (initialParamX + dx).coerceIn(0, maxX)
+                        params.y = (initialParamY + dy).coerceIn(0, maxY)
                         try {
                             windowManager?.updateViewLayout(overlayView, params)
                         } catch (e: Exception) {
@@ -269,7 +299,14 @@ class TopHudOverlayService : Service() {
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (!isDragging) {
+                    if (isDragging) {
+                        // 拖曳放開後自動保存使用者自訂座標，下次開機自動還原
+                        getSharedPreferences("carhud_prefs", Context.MODE_PRIVATE)
+                            .edit()
+                            .putInt(PREF_HUD_POS_X, params.x)
+                            .putInt(PREF_HUD_POS_Y, params.y)
+                            .apply()
+                    } else {
                         toggleExpandedMenu()
                     }
                     true
@@ -397,13 +434,14 @@ class TopHudOverlayService : Service() {
             val badge = circleBadge
             val tvExpandedInfo = overlayView?.findViewById<TextView>(R.id.tv_expanded_info)
 
-            // 即時車速優先採用 GPS 速度 (若 GPS 啟用中則以 GPS 為準，包含靜止 0 km/h)
-            val currentSpeed = if (GpsSpeedManager.isGpsActive) {
-                GpsSpeedManager.currentGpsSpeed
-            } else if (GpsSpeedManager.currentGpsSpeed > 0) {
-                GpsSpeedManager.currentGpsSpeed
-            } else {
-                data.currentSpeed
+            // 雙軌車速智能融合：
+            // 1. 若 GPS 晶片傳回即時車速 (> 0)，優先採用高頻 GPS
+            // 2. 若神盾通知有車速 (> 0)，在 GPS 尚未就緒前立即補位，絕不卡 0
+            // 3. 若 GPS 處於活躍狀態且二者皆為 0，代表車輛真正靜止
+            val currentSpeed = when {
+                GpsSpeedManager.currentGpsSpeed > 0 -> GpsSpeedManager.currentGpsSpeed
+                data.currentSpeed > 0 -> data.currentSpeed
+                else -> 0
             }
             tvSpeed?.text = currentSpeed.toString()
 
@@ -476,6 +514,7 @@ class TopHudOverlayService : Service() {
         super.onDestroy()
         isRunning = false
         currentService = null
+        selfHealingHandler.removeCallbacks(selfHealingRunnable)
         SpeedTrapListenerService.removeDataListener(dataListener)
         GpsSpeedManager.removeSpeedListener(speedListener)
         autoCollapseHandler.removeCallbacks(autoCollapseRunnable)
