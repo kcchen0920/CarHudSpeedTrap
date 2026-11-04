@@ -315,6 +315,15 @@ class TopHudOverlayService : Service() {
             }
         }
 
+        // 點擊詳情訊息可直接開啟診斷主畫面
+        overlayView?.findViewById<View>(R.id.tv_expanded_info)?.setOnClickListener {
+            val mainIntent = Intent(this, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(mainIntent)
+            layoutExpandedMenu?.visibility = View.GONE
+        }
+
         // 展開選單中的功能操作按鈕
         overlayView?.findViewById<View>(R.id.btn_circle_aa)?.setOnClickListener {
             QuickSwitchHelper.launchAndroidAuto(this)
@@ -426,8 +435,10 @@ class TopHudOverlayService : Service() {
         }
     }
 
+    private val mainUiHandler = Handler(Looper.getMainLooper())
+
     private fun updateOverlayUi(data: SpeedTrapData) {
-        overlayView?.post {
+        mainUiHandler.post {
             val tvLimit = tvCircleSpeedLimit
             val tvSpeed = tvCircleSpeed
             val tvSub = tvCircleSub
