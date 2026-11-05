@@ -6,6 +6,8 @@ import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.location.OnNmeaMessageListener
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -39,19 +41,20 @@ object GpsSpeedManager {
     private var isGpsRegistered = false
     private var isPassiveRegistered = false
     private var isNetworkRegistered = false
+    private var isNmeaRegistered = false
 
     // 專屬於 GPS 差分計算的最後參考座標與硬體單調時間戳記 (SystemClock.elapsedRealtime)
     private var lastGpsLocation: Location? = null
     private var lastGpsLocationElapsed: Long = 0L
 
-    // 記錄最後一次收到 GPS 回呼的單調時間戳記
+    // 記錄最後一次收到 GPS/NMEA 回呼的單調時間戳記
     private var lastGpsCallbackElapsed: Long = 0L
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
     // 逾時安全看門狗與自癒巡檢：
     // 1. 若超過 4.5 秒無任何定位訊號且車速大於 0，自動將時速歸零，避免儀表卡死在非零時速
-    // 2. 若開機後 GPS / Passive 尚未註冊成功，每 3 秒自動重試掛鉤，解決車機硬體冷啟動延遲通電問題！
+    // 2. 開機硬體冷啟動延遲自癒：若超過 5 秒未收到任何 GPS/NMEA 回呼，代表開機初期註冊受硬體未通電影響失效，自動解除舊監聽並重新掛鉤！
     private val watchdogRunnable = object : Runnable {
         override fun run() {
             val now = SystemClock.elapsedRealtime()
@@ -79,14 +82,20 @@ object GpsSpeedManager {
                 }
             }
 
-            // 2. 開機硬體延遲自癒：若 GPS 未成功註冊或尚未進入活躍狀態，持續嘗試掛鉤
-            if (!isGpsRegistered || !isPassiveRegistered || !isGpsActive) {
+            // 2. 開機硬體延遲自癒：若超過 5 秒未收到任何實體訊號，強制重設狀態並重新掛鉤，擊破死監聽
+            val isSilent = lastGpsCallbackElapsed == 0L || (now - lastGpsCallbackElapsed) > 5000L
+            if (isSilent) {
+                isGpsActive = false
+                isGpsRegistered = false
+                isPassiveRegistered = false
+                isNetworkRegistered = false
+                isNmeaRegistered = false
                 appContext?.let { ctx ->
                     tryRegisterProviders(ctx)
                 }
             }
 
-            mainHandler.postDelayed(this, 3000L)
+            mainHandler.postDelayed(this, 3500L)
         }
     }
 
@@ -286,6 +295,12 @@ object GpsSpeedManager {
                 return
             }
 
+            // 0. 清理可能卡死或無效的舊監聽 (避免重複註冊或資源洩漏)
+            try {
+                lm.removeUpdates(gpsLocationListener)
+                lm.removeUpdates(networkLocationListener)
+            } catch (ignored: Exception) {}
+
             // 1. 註冊 GPS_PROVIDER (全時 500ms 高頻率、0 米無死角刷新)
             // 核心關鍵修正：不阻擋在 isProviderEnabled，車機通電開機時立即掛鉤，待晶片啟動直接生效
             if (hasFine && !isGpsRegistered) {
@@ -334,7 +349,21 @@ object GpsSpeedManager {
                 } catch (ignored: Exception) {}
             }
 
-            // 4. 註冊 NETWORK_PROVIDER (輔助定位與室內/隧道備援)
+            // 4. 核心硬體直讀：掛鉤 NMEA 0183 原始衛星數據流 ($GPRMC, $GPVTG, $GNRMC)
+            // 車機硬體 GPS 晶片無論 Android LocationListener 是否回傳，皆會以 1Hz~5Hz 直吐 NMEA 語句
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && hasFine && !isNmeaRegistered) {
+                try {
+                    lm.addNmeaListener(OnNmeaMessageListener { message: String?, _: Long ->
+                        message?.let { handleNmeaMessage(it) }
+                    }, Handler(Looper.getMainLooper()))
+                    isNmeaRegistered = true
+                    Log.i(TAG, "✓ NMEA 衛星底層數據流已直接掛鉤 (免經中介層直接獲取硬體車速)")
+                } catch (e: Exception) {
+                    Log.w(TAG, "掛鉤 NMEA 異常: ${e.message}")
+                }
+            }
+
+            // 5. 註冊 NETWORK_PROVIDER (輔助定位與室內/隧道備援)
             if (!isNetworkRegistered) {
                 try {
                     lm.requestLocationUpdates(
@@ -351,7 +380,7 @@ object GpsSpeedManager {
                 }
             }
 
-            // 5. 嘗試讀取最後已知座標以快速就緒
+            // 6. 嘗試讀取最後已知座標以快速就緒
             val lastLoc = try {
                 lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
                     ?: lm.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER)
@@ -366,6 +395,67 @@ object GpsSpeedManager {
         } catch (e: Exception) {
             Log.e(TAG, "註冊 GPS 提供者異常: ${e.message}")
         }
+    }
+
+    /**
+     * 解析 NMEA 0183 原始衛星數據流中的真實車速
+     * 支援 $GPRMC, $GNRMC (海浬 knots 轉 km/h) 與 $GPVTG, $GNVTG (直接 km/h)
+     */
+    private fun handleNmeaMessage(message: String) {
+        if (!message.startsWith("$")) return
+        try {
+            val parts = message.split(",")
+            val tag = parts[0].uppercase(java.util.Locale.ROOT)
+            var speedKmh = -1f
+
+            // 1. $GPRMC / $GNRMC / $BDRMC
+            // 格式: $GPRMC,hhmmss.ss,A,lat,a,lon,a,speed(knots),track,date...
+            if ((tag.endsWith("RMC")) && parts.size > 7) {
+                val status = parts[2]
+                if (status.equals("A", ignoreCase = true)) {
+                    val knots = parts[7].toFloatOrNull()
+                    if (knots != null) {
+                        speedKmh = knots * 1.852f
+                    }
+                }
+            }
+            // 2. $GPVTG / $GNVTG / $BDVTG
+            // 格式: $GPVTG,track,T,track,M,speed(knots),N,speed(km/h),K...
+            else if ((tag.endsWith("VTG")) && parts.size > 7) {
+                val kmh = parts[7].toFloatOrNull()
+                if (kmh != null) {
+                    speedKmh = kmh
+                }
+            }
+
+            if (speedKmh >= 0f) {
+                isGpsActive = true
+                lastGpsCallbackElapsed = SystemClock.elapsedRealtime()
+                val finalSpeed = if (speedKmh < 1.5f) 0 else speedKmh.toInt()
+
+                if (finalSpeed != currentGpsSpeed || (finalSpeed > 0 && currentGpsSpeed == 0)) {
+                    currentGpsSpeed = finalSpeed
+                    lastSpeedSource = "NMEA 硬體直讀 ($finalSpeed km/h)"
+                    lastLocationDesc = "NMEA 原始硬體訊號連線中 ($tag)"
+
+                    val curData = SpeedTrapListenerService.latestData
+                    val updated = curData.copy(currentSpeed = finalSpeed)
+                    SpeedTrapListenerService.latestData = updated
+                    SpeedTrapListenerService.dispatchDataUpdated(updated)
+                    dispatchGpsSpeed(finalSpeed, lastLocationDesc)
+
+                    appContext?.let { ctx ->
+                        CarHudWidgetProvider.updateWidgetData(
+                            context = ctx,
+                            speedLimit = updated.speedLimit,
+                            distMeters = updated.distanceMeters,
+                            currentSpeed = finalSpeed,
+                            camType = updated.camType
+                        )
+                    }
+                }
+            }
+        } catch (ignored: Exception) {}
     }
 
     /**

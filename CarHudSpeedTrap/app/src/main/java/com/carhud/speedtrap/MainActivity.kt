@@ -583,10 +583,35 @@ class MainActivity : AppCompatActivity() {
             this,
             android.Manifest.permission.ACCESS_FINE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED
-        if (hasLocation) {
-            btnLocation.text = "✓ 2. GPS 定位權限已啟用"
+
+        val hasBackground = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ContextCompat.checkSelfPermission(
+                this,
+                android.Manifest.permission.ACCESS_BACKGROUND_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
+
+        if (hasLocation && hasBackground) {
+            btnLocation.text = "✓ 2. GPS 定位權限已完全啟用 (一律允許)"
             btnLocation.setTextColor(0xFF10B981.toInt())
             btnLocation.isEnabled = false
+        } else if (hasLocation) {
+            btnLocation.text = "⚠️ 2. GPS 建議設為「一律允許」(點此開啟設定)"
+            btnLocation.setTextColor(0xFFF59E0B.toInt())
+            btnLocation.isEnabled = true
+            btnLocation.setOnClickListener {
+                try {
+                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = Uri.parse("package:$packageName")
+                    }
+                    startActivity(intent)
+                    Toast.makeText(this, "請在「權限」->「位置資訊」中勾選「一律允許」，以保證開機後背景即時測速！", Toast.LENGTH_LONG).show()
+                } catch (e: Exception) {
+                    requestLocationPermission()
+                }
+            }
         } else {
             requestLocationPermission()
         }

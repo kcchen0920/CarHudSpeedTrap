@@ -34,7 +34,7 @@ android {
     defaultConfig {
         applicationId "com.carhud.speedtrap"
         minSdk 24
-        targetSdk 34
+        targetSdk 33
         versionCode getGitCommitCount()
         versionName "1.1.${getGitCommitCount()}"
         signingConfig signingConfigs.config
