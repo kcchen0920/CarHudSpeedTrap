@@ -163,13 +163,16 @@ class MainActivity : AppCompatActivity() {
                 speedLimit = 50,
                 distanceMeters = 180,
                 currentSpeed = 68,
-                camType = "⚠️ 超速！固定測速",
-                rawText = "前方 180 公尺 固定測速照相 限速 50 超速"
+                camType = "區間測速 (均速66)",
+                rawText = "前方 180 公尺 區間測速 限速 50 均速 66",
+                isIntervalSpeedTrap = true,
+                intervalAverageSpeed = 66,
+                intervalSafePassSpeed = 44
             )
             SpeedTrapListenerService.latestData = testData
-            CarHudWidgetProvider.updateWidgetData(this, 50, 180, 68, "⚠️ 超速！固定測速")
+            CarHudWidgetProvider.updateWidgetData(this, 50, 180, 68, "⚠️ 區間超速！")
             SpeedTrapListenerService.dispatchDataUpdated(testData)
-            Toast.makeText(this, "已推送超速數據：速限 50 / 車速 68 / 距 180m", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "已推送超速數據 (觸發餘光紅框與區間逆算)：速限 50 / 車速 68 / 均速 66", Toast.LENGTH_SHORT).show()
             updateDiagnosticPanel()
         }
 

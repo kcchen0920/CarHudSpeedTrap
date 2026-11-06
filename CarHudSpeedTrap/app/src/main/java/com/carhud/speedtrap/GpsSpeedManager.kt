@@ -36,6 +36,19 @@ object GpsSpeedManager {
     @Volatile
     var lastSpeedSource: String = "無"
 
+    // 方案六：車載動態階梯式節能溫控採樣檔位 (Adaptive Thermal Throttling)
+    enum class GpsSamplingTier(val minIntervalMs: Long, val label: String) {
+        IDLE_COOLING(2500L, "靜止怠速溫控節能 (2.5s)"),
+        CITY_CRUISE(1000L, "市區巡航 (1.0s)"),
+        HIGH_SPEED(400L, "高速全開 (400ms)")
+    }
+
+    @Volatile
+    var currentSamplingTier: GpsSamplingTier = GpsSamplingTier.CITY_CRUISE
+
+    private var lastProcessElapsed: Long = 0L
+    private var stationaryStartElapsed: Long = 0L
+
     private var appContext: Context? = null
     private var locationManager: LocationManager? = null
     private var isGpsRegistered = false
@@ -154,7 +167,31 @@ object GpsSpeedManager {
 
     private fun handleLocationUpdate(location: Location, isHighAccuracy: Boolean) {
         isGpsActive = true
-        lastGpsCallbackElapsed = SystemClock.elapsedRealtime()
+        val nowElapsed = SystemClock.elapsedRealtime()
+        lastGpsCallbackElapsed = nowElapsed
+
+        // 方案六：車載階梯式採樣檔位動態評估 (防夏天車機熱當降頻)
+        val tier = when {
+            currentGpsSpeed == 0 -> {
+                if (stationaryStartElapsed == 0L) stationaryStartElapsed = nowElapsed
+                if (nowElapsed - stationaryStartElapsed > 5000L) GpsSamplingTier.IDLE_COOLING else GpsSamplingTier.CITY_CRUISE
+            }
+            currentGpsSpeed in 1..55 -> {
+                stationaryStartElapsed = 0L
+                GpsSamplingTier.CITY_CRUISE
+            }
+            else -> {
+                stationaryStartElapsed = 0L
+                GpsSamplingTier.HIGH_SPEED
+            }
+        }
+        currentSamplingTier = tier
+
+        // 靜止防燙節流：若處於靜止怠速檔且距上次運算小於 2.5 秒，跳過重複座標位移推算與派發，使 CPU 休息降溫
+        if (tier == GpsSamplingTier.IDLE_COOLING && (nowElapsed - lastProcessElapsed) < tier.minIntervalMs) {
+            return
+        }
+        lastProcessElapsed = nowElapsed
 
         val speedKmh = calculateSpeed(location)
         currentGpsSpeed = speedKmh

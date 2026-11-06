@@ -118,6 +118,34 @@ class TopHudOverlayService : Service() {
     private var tvCircleSpeedLimit: TextView? = null
     private var tvScaleLabel: TextView? = null
 
+    // 方案二：全螢幕視線餘光呼吸紅光 Overlay (Peripheral Vision Edge Glow)
+    private var edgeGlowView: View? = null
+    private var edgeGlowParams: WindowManager.LayoutParams? = null
+    private var isEdgeGlowVisible: Boolean = false
+    private val edgeGlowHandler = Handler(Looper.getMainLooper())
+    private var glowPulsePhase: Float = 0.35f
+    private var glowPulseIncreasing: Boolean = true
+    private val edgeGlowPulseRunnable = object : Runnable {
+        override fun run() {
+            if (!isEdgeGlowVisible) return
+            if (glowPulseIncreasing) {
+                glowPulsePhase += 0.08f
+                if (glowPulsePhase >= 0.85f) {
+                    glowPulsePhase = 0.85f
+                    glowPulseIncreasing = false
+                }
+            } else {
+                glowPulsePhase -= 0.08f
+                if (glowPulsePhase <= 0.30f) {
+                    glowPulsePhase = 0.30f
+                    glowPulseIncreasing = true
+                }
+            }
+            edgeGlowView?.alpha = glowPulsePhase
+            edgeGlowHandler.postDelayed(this, 60L)
+        }
+    }
+
     private val autoCollapseHandler = Handler(Looper.getMainLooper())
     private val autoCollapseRunnable = Runnable {
         layoutExpandedMenu?.visibility = View.GONE
@@ -356,12 +384,57 @@ class TopHudOverlayService : Service() {
             e.printStackTrace()
         }
 
+        // 方案二：初始化視線餘光全螢幕呼吸紅光 (不可觸控、零阻擋)
+        initEdgeGlowOverlay(layoutType)
+
         // 載入當前測速快取數據
         updateOverlayUi(SpeedTrapListenerService.latestData)
 
         // 註冊神盾通知與 GPS 車速回呼 (多觀察者模式，不覆蓋其他組件)
         SpeedTrapListenerService.addDataListener(dataListener)
         GpsSpeedManager.addSpeedListener(speedListener)
+    }
+
+    private fun initEdgeGlowOverlay(layoutType: Int) {
+        val glowView = View(this).apply {
+            setBackgroundResource(R.drawable.bg_edge_glow_red)
+            visibility = View.GONE
+            alpha = 0f
+        }
+        val glowParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            layoutType,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = 0
+            y = 0
+        }
+        try {
+            windowManager?.addView(glowView, glowParams)
+            edgeGlowView = glowView
+            edgeGlowParams = glowParams
+        } catch (e: Exception) {
+            Log.w(TAG, "初始化 EdgeGlow 失敗: ${e.message}")
+        }
+    }
+
+    private fun showEdgeGlow(show: Boolean) {
+        if (show == isEdgeGlowVisible) return
+        isEdgeGlowVisible = show
+        if (show) {
+            edgeGlowView?.visibility = View.VISIBLE
+            edgeGlowHandler.removeCallbacks(edgeGlowPulseRunnable)
+            edgeGlowHandler.post(edgeGlowPulseRunnable)
+        } else {
+            edgeGlowHandler.removeCallbacks(edgeGlowPulseRunnable)
+            edgeGlowView?.visibility = View.GONE
+        }
     }
 
     private val dataListener: (SpeedTrapData) -> Unit = { data ->
@@ -476,13 +549,35 @@ class TopHudOverlayService : Service() {
             val overDiff = if (isOverSpeed) currentSpeed - data.speedLimit else 0
             val isApproachingCam = data.distanceMeters > 0 || (data.speedLimit > 0 && data.camType.isNotEmpty())
 
+            // 方案二：視線餘光全螢幕動態呼吸紅光觸發判定 (超速且距離相機 <= 350m)
+            val shouldTriggerEdgeGlow = isOverSpeed && overDiff >= 3 && data.distanceMeters in 1..400
+            showEdgeGlow(shouldTriggerEdgeGlow)
+
+            // 方案三：區間測速均速與安全通過建議時速顯示
+            if (data.isIntervalSpeedTrap && data.intervalAverageSpeed > 0) {
+                if (data.distanceMeters > 0) {
+                    tvSub?.text = "均${data.intervalAverageSpeed}|${data.distanceMeters}m"
+                } else {
+                    tvSub?.text = "均${data.intervalAverageSpeed}"
+                }
+            }
+
+            // 方案一：神盾後台離線告警提示
+            if (!data.isSpeedTrapAlive) {
+                tvSub?.text = "神盾離線"
+            }
+
             when {
                 // 1. 嚴重超速 (> 5 km/h) -> 鮮紅爆閃警戒
                 overDiff > 5 -> {
                     tvSpeed?.setTextColor(0xFFEF4444.toInt()) // 亮紅
                     tvSub?.setTextColor(0xFFEF4444.toInt())
                     badge?.setBackgroundResource(R.drawable.bg_hud_circle_alert)
-                    tvExpandedInfo?.text = "⚠️ 嚴重超速！${data.camType} ${if (data.distanceMeters > 0) "${data.distanceMeters}m " else ""}(限速${data.speedLimit})"
+                    if (data.isIntervalSpeedTrap && data.intervalAverageSpeed > 0) {
+                        tvExpandedInfo?.text = "⚠️ 區間超速！均速:${data.intervalAverageSpeed} (建議降至 <= ${data.intervalSafePassSpeed})"
+                    } else {
+                        tvExpandedInfo?.text = "⚠️ 嚴重超速！${data.camType} ${if (data.distanceMeters > 0) "${data.distanceMeters}m " else ""}(限速${data.speedLimit})"
+                    }
                     tvExpandedInfo?.setTextColor(0xFFEF4444.toInt())
                 }
                 // 2. 輕微超速 (1 ~ 5 km/h) -> 警示橙色
@@ -490,7 +585,11 @@ class TopHudOverlayService : Service() {
                     tvSpeed?.setTextColor(0xFFF97316.toInt()) // 橙色
                     tvSub?.setTextColor(0xFFF97316.toInt())
                     badge?.setBackgroundResource(R.drawable.bg_hud_circle_warning)
-                    tvExpandedInfo?.text = "⚠️ 請減速！${data.camType} ${if (data.distanceMeters > 0) "${data.distanceMeters}m " else ""}(限速${data.speedLimit})"
+                    if (data.isIntervalSpeedTrap && data.intervalAverageSpeed > 0) {
+                        tvExpandedInfo?.text = "⚠️ 請減速！區間均速:${data.intervalAverageSpeed} (建議維持 <= ${data.intervalSafePassSpeed})"
+                    } else {
+                        tvExpandedInfo?.text = "⚠️ 請減速！${data.camType} ${if (data.distanceMeters > 0) "${data.distanceMeters}m " else ""}(限速${data.speedLimit})"
+                    }
                     tvExpandedInfo?.setTextColor(0xFFF97316.toInt())
                 }
                 // 3. 相機緊急近逼 (距離 <= 300m) -> 鮮黃外框與高亮文字
@@ -498,7 +597,11 @@ class TopHudOverlayService : Service() {
                     tvSpeed?.setTextColor(0xFFFDE047.toInt()) // 鮮黃
                     tvSub?.setTextColor(0xFFF59E0B.toInt()) // 琥珀橘
                     badge?.setBackgroundResource(R.drawable.bg_hud_circle_warning)
-                    tvExpandedInfo?.text = "📷 相機近逼！${data.camType} ${data.distanceMeters}m (限速${data.speedLimit})"
+                    if (data.isIntervalSpeedTrap && data.intervalAverageSpeed > 0) {
+                        tvExpandedInfo?.text = "⏱️ 區間測速中 均速:${data.intervalAverageSpeed} (安全建議 <= ${data.intervalSafePassSpeed})"
+                    } else {
+                        tvExpandedInfo?.text = "📷 相機近逼！${data.camType} ${data.distanceMeters}m (限速${data.speedLimit})"
+                    }
                     tvExpandedInfo?.setTextColor(0xFFF59E0B.toInt())
                 }
                 // 4. 偵測到前方測速相機 (距離 > 300m) -> 科技金黃外框
@@ -506,7 +609,11 @@ class TopHudOverlayService : Service() {
                     tvSpeed?.setTextColor(0xFF67E8F9.toInt()) // 亮霓虹青
                     tvSub?.setTextColor(0xFFFBBF24.toInt()) // 金黃距離
                     badge?.setBackgroundResource(R.drawable.bg_hud_circle_cam)
-                    tvExpandedInfo?.text = "📷 前方測速：${data.camType} ${if (data.distanceMeters > 0) "${data.distanceMeters}m " else ""}(限速${data.speedLimit})"
+                    if (data.isIntervalSpeedTrap && data.intervalAverageSpeed > 0) {
+                        tvExpandedInfo?.text = "⏱️ 區間測速中 均速:${data.intervalAverageSpeed} (安全建議 <= ${data.intervalSafePassSpeed})"
+                    } else {
+                        tvExpandedInfo?.text = "📷 前方測速：${data.camType} ${if (data.distanceMeters > 0) "${data.distanceMeters}m " else ""}(限速${data.speedLimit})"
+                    }
                     tvExpandedInfo?.setTextColor(0xFFFBBF24.toInt())
                 }
                 // 5. 一般正常巡航 -> 經典夜空黑/青光外框
@@ -514,8 +621,13 @@ class TopHudOverlayService : Service() {
                     tvSpeed?.setTextColor(0xFFFFFFFF.toInt())
                     tvSub?.setTextColor(0xFF00F2FE.toInt())
                     badge?.setBackgroundResource(R.drawable.bg_hud_circle)
-                    tvExpandedInfo?.text = if (data.camType.isNotEmpty()) data.camType else "🟢 路況順暢"
-                    tvExpandedInfo?.setTextColor(0xFF10B981.toInt())
+                    if (!data.isSpeedTrapAlive) {
+                        tvExpandedInfo?.text = "⚠️ 神盾背景離線，正在自動拉活中..."
+                        tvExpandedInfo?.setTextColor(0xFFEF4444.toInt())
+                    } else {
+                        tvExpandedInfo?.text = if (data.camType.isNotEmpty()) data.camType else "🟢 路況順暢"
+                        tvExpandedInfo?.setTextColor(0xFF10B981.toInt())
+                    }
                 }
             }
         }
@@ -525,10 +637,12 @@ class TopHudOverlayService : Service() {
         super.onDestroy()
         isRunning = false
         currentService = null
+        showEdgeGlow(false)
         selfHealingHandler.removeCallbacks(selfHealingRunnable)
         SpeedTrapListenerService.removeDataListener(dataListener)
         GpsSpeedManager.removeSpeedListener(speedListener)
         autoCollapseHandler.removeCallbacks(autoCollapseRunnable)
+        edgeGlowHandler.removeCallbacks(edgeGlowPulseRunnable)
         if (overlayView != null) {
             try {
                 if (overlayView?.isAttachedToWindow == true) {
@@ -539,6 +653,17 @@ class TopHudOverlayService : Service() {
             }
             overlayView = null
         }
+        if (edgeGlowView != null) {
+            try {
+                if (edgeGlowView?.isAttachedToWindow == true) {
+                    windowManager?.removeView(edgeGlowView)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "removeView edgeGlow 忽略: ${e.message}")
+            }
+            edgeGlowView = null
+        }
         overlayParams = null
+        edgeGlowParams = null
     }
 }

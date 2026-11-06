@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <!-- 方案二：全螢幕視線餘光紅色呼吸警示外框 (10dp 亮紅霓虹發光描邊，中心透明不擋地圖) -->
+    <stroke
+        android:width="12dp"
+        android:color="#E6EF4444" />
+    <solid android:color="#1AEC4899" />
+</shape>

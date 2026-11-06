@@ -5,6 +5,8 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -18,7 +20,11 @@ data class SpeedTrapData(
     val distanceMeters: Int,
     val currentSpeed: Int,
     val camType: String,
-    val rawText: String = ""
+    val rawText: String = "",
+    val isIntervalSpeedTrap: Boolean = false, // 方案三：是否為區間測速
+    val intervalAverageSpeed: Int = 0,       // 方案三：區間目前平均時速
+    val intervalSafePassSpeed: Int = 0,      // 方案三：安全通過建議時速 (反推維持時速)
+    val isSpeedTrapAlive: Boolean = true     // 方案一：神盾後台存活狀態
 )
 
 class SpeedTrapListenerService : NotificationListenerService() {
@@ -87,6 +93,8 @@ class SpeedTrapListenerService : NotificationListenerService() {
         private val PATTERN_CAM_FOLLOWED_LIMIT = Pattern.compile("(?:固定測速|固定照相|固定式|區間測速|區間起點|區間終點|流動測速|流動照相|科技執法|違規取締|測速照相|測速|照相)\\s*[:：=\\s-]*[\\[(（]?\\s*(\\d{2,3})\\s*(?:公里|km/h|km|kph)?[\\])）]?")
         private val PATTERN_BRACKET_LIMIT = Pattern.compile("[\\[(（]\\s*(\\d{2,3})\\s*(?:公里|km/h|kph)?[\\])）]\\s*(?:固定|測速|照相|區間|科技執法|流動)")
         private val PATTERN_KM_UNIT = Pattern.compile("(\\d{2,3})\\s*(?:公里|km/h|kph)", Pattern.CASE_INSENSITIVE)
+        // 方案三：區間測速平均時速正則 (如: "均速: 72", "均速 65km/h", "平均時速 80", "區間均速 75")
+        private val PATTERN_INTERVAL_AVG = Pattern.compile("(?:均速|平均時速|平均速度|區間均速|平均)\\s*[:：=]?\\s*(\\d{1,3})")
 
         /**
          * 判定神盾是否已在運行中（多維度檢查：5分鐘內通知心跳、作用中常駐狀態列通知）
@@ -152,6 +160,10 @@ class SpeedTrapListenerService : NotificationListenerService() {
         // 核心：連線時自動確保 HUD 懸浮球常駐
         TopHudOverlayService.startIfEnabled(applicationContext)
 
+        // 方案一：啟動神盾後台防殺與靜默守護看門狗 (每 30 秒巡檢)
+        speedTrapGuardHandler.removeCallbacks(speedTrapGuardRunnable)
+        speedTrapGuardHandler.postDelayed(speedTrapGuardRunnable, 30_000L)
+
         // 核心亮點：立即掃描當前系統作用中通知（若神盾已在背景執行，立即解析無需等待新事件）
         try {
             activeNotifications?.forEach { sbn ->
@@ -170,10 +182,47 @@ class SpeedTrapListenerService : NotificationListenerService() {
         super.onListenerDisconnected()
         isConnected = false
         currentInstance = null
+        speedTrapGuardHandler.removeCallbacks(speedTrapGuardRunnable)
         Log.w(TAG, "⚠ NotificationListenerService 已斷線！")
         onDebugInfoUpdated?.invoke()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             requestRebind(ComponentName(this, SpeedTrapListenerService::class.java))
+        }
+    }
+
+    override fun onDestroy() {
+        speedTrapGuardHandler.removeCallbacks(speedTrapGuardRunnable)
+        super.onDestroy()
+    }
+
+    // 方案一：神盾後台防殺與靜默守護機制 (SpeedTrap Keep-Alive Daemon)
+    private val speedTrapGuardHandler = Handler(Looper.getMainLooper())
+    private val speedTrapGuardRunnable = object : Runnable {
+        override fun run() {
+            checkSpeedTrapHealthAndAutoHeal()
+            speedTrapGuardHandler.postDelayed(this, 30_000L) // 每 30 秒巡檢一次
+        }
+    }
+
+    private fun checkSpeedTrapHealthAndAutoHeal() {
+        val now = System.currentTimeMillis()
+        val currentSpeed = GpsSpeedManager.currentGpsSpeed
+        // 車速 >= 20 km/h 且超過 3 分鐘 (180s) 完全未收到神盾通知，代表神盾已在背景被砍或凍結
+        if (currentSpeed >= 20 && lastNotificationTimeMillis > 0L && (now - lastNotificationTimeMillis) > 180_000L) {
+            Log.w(TAG, "⚠️ [方案一] 偵測到車輛行駛中 (${currentSpeed} km/h) 且神盾已 >3分鐘 無通知！自動拉活...")
+            val alertData = latestData.copy(
+                isSpeedTrapAlive = false,
+                camType = "⚠️ 神盾離線·自動拉活中"
+            )
+            latestData = alertData
+            dispatchDataUpdated(alertData)
+
+            SpeedTrapAutoLauncher.startSpeedTrapIfNeeded(
+                context = applicationContext,
+                bringHomeToFront = true,
+                forceLaunch = true
+            )
+            lastNotificationTimeMillis = now - 60_000L // 保留緩衝避免連續重複拉起
         }
     }
 
@@ -469,12 +518,40 @@ class SpeedTrapListenerService : NotificationListenerService() {
             else -> 0
         }
 
+        // 方案三：區間測速均速與安全通過建議時速 (Safe Pass Target Speed) 逆算
+        val isInterval = camType.contains("區間") || content.contains("區間")
+        var intervalAvg = 0
+        var safePass = 0
+
+        if (isInterval) {
+            val avgMatcher = PATTERN_INTERVAL_AVG.matcher(content)
+            if (avgMatcher.find()) {
+                intervalAvg = avgMatcher.group(1)?.toIntOrNull() ?: 0
+            }
+
+            if (effectiveLimit > 0) {
+                // 台灣法規寬限門檻通常為速限 + 10 km/h，取保守安全閾值 (速限 + 5 km/h)
+                val targetTolerance = effectiveLimit + 5
+                if (intervalAvg > targetTolerance) {
+                    // 目前均速超標：逆算需降至多少時速巡航，才能在通過終點時壓回法定安全範圍
+                    val overDebt = intervalAvg - targetTolerance
+                    safePass = (effectiveLimit - overDebt).coerceIn(30, effectiveLimit)
+                } else {
+                    safePass = effectiveLimit
+                }
+            }
+        }
+
         return SpeedTrapData(
             speedLimit = effectiveLimit,
             distanceMeters = dist,
             currentSpeed = speed,
             camType = camType,
-            rawText = content
+            rawText = content,
+            isIntervalSpeedTrap = isInterval,
+            intervalAverageSpeed = intervalAvg,
+            intervalSafePassSpeed = safePass,
+            isSpeedTrapAlive = true
         )
     }
 }
