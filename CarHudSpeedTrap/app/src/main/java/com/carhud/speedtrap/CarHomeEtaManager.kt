@@ -50,11 +50,13 @@ object CarHomeEtaManager {
         prefs.edit().putBoolean(KEY_HOME_ETA_ENABLED, enabled).apply()
     }
 
-    fun getHomeLocation(context: Context): Pair<Double, Double>? {
+    fun getHomeLocation(context: Context): Pair<Double, Double> {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-        val lat = prefs.getFloat(KEY_HOME_LAT, 0f).toDouble()
-        val lng = prefs.getFloat(KEY_HOME_LNG, 0f).toDouble()
-        if (lat == 0.0 && lng == 0.0) return null
+        val lat = prefs.getFloat(KEY_HOME_LAT, 24.965467f).toDouble()
+        val lng = prefs.getFloat(KEY_HOME_LNG, 121.237283f).toDouble()
+        if (lat == 0.0 && lng == 0.0) {
+            return Pair(24.965467, 121.237283)
+        }
         return Pair(lat, lng)
     }
 
@@ -163,24 +165,64 @@ object CarHomeEtaManager {
         onResult: ((Boolean, String) -> Unit)? = null
     ) {
         val channel = getChannel(context)
-        val endpoint = "https://ntfy.sh/$channel"
+        val endpoint = "https://ntfy.sh"
+        val homeCoords = getHomeLocation(context)
+        val homeNavUrl = "https://www.google.com/maps/dir/?api=1&destination=${homeCoords.first},${homeCoords.second}"
+        val dashUrl = "http://192.168.50.166:8088"
+        val snoozeUrl = "http://192.168.50.166:8088/api/tag/snooze?tag_id=car_hud&minutes=30"
 
         pushExecutor.execute {
             try {
-                val title = if (event == "car_arrived") "🏡 爸爸已抵達家門！" else "🚗 爸爸正在回家路上 (ETA: ${etaMinutes}分)"
-                val message = if (event == "car_arrived") {
-                    "車輛已進入住家 500m 範圍，請準備開門迎接！"
+                val isArrived = (event == "car_arrived")
+                val title = if (isArrived) "🏡 爸爸已抵達家門口！" else "🚗 爸爸正在回家路上 (ETA: ${etaMinutes}分)"
+                val message = if (isArrived) {
+                    "📍 車輛已進入住家 500m 範圍！\n🚪 請準備開門迎接～"
                 } else {
-                    "目前距離住家約 ${distanceKm} km，預估 $etaMinutes 分鐘後抵達客廳。"
+                    "⏱️ 預估抵達：${etaMinutes} 分鐘後 (ETA)\n📍 距離住家：約 ${distanceKm} km\n⚡ 當前車速：${speedKmh} km/h (行駛中)\n💡 貼心提醒：請家人注意準備～"
                 }
 
-                val jsonPayload = JSONObject().apply {
-                    put("event", event)
-                    put("distance_km", distanceKm.toDouble())
-                    put("speed_kmh", speedKmh)
-                    put("eta_minutes", etaMinutes)
+                val actionsArray = org.json.JSONArray().apply {
+                    put(JSONObject().apply {
+                        put("action", "view")
+                        put("label", "🗺️ 路線導航")
+                        put("url", homeNavUrl)
+                        put("clear", true)
+                    })
+                    put(JSONObject().apply {
+                        put("action", "view")
+                        put("label", "📊 家庭面板")
+                        put("url", dashUrl)
+                        put("clear", true)
+                    })
+                    put(JSONObject().apply {
+                        put("action", "http")
+                        put("label", "🔕 靜音 30 分鐘")
+                        put("url", snoozeUrl)
+                        put("method", "POST")
+                        put("clear", true)
+                    })
+                }
+
+                val tagsArray = org.json.JSONArray().apply {
+                    if (isArrived) {
+                        put("house")
+                        put("bell")
+                        put("tada")
+                    } else {
+                        put("car")
+                        put("clock")
+                        put("hourglass_flowing_sand")
+                    }
+                }
+
+                val payload = JSONObject().apply {
+                    put("topic", channel)
+                    put("title", title)
                     put("message", message)
-                    put("timestamp", System.currentTimeMillis() / 1000)
+                    put("priority", if (isArrived) 5 else 4) // 5 = Urgent/Max, 4 = High
+                    put("tags", tagsArray)
+                    put("click", homeNavUrl)
+                    put("actions", actionsArray)
                 }
 
                 val url = URL(endpoint)
@@ -190,11 +232,9 @@ object CarHomeEtaManager {
                 conn.readTimeout = 8000
                 conn.doOutput = true
                 conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                conn.setRequestProperty("Title", java.net.URLEncoder.encode(title, "UTF-8"))
-                conn.setRequestProperty("Tags", if (event == "car_arrived") "house,bell" else "car,clock")
 
                 OutputStreamWriter(conn.outputStream, "UTF-8").use { writer ->
-                    writer.write(jsonPayload.toString())
+                    writer.write(payload.toString())
                     writer.flush()
                 }
 
