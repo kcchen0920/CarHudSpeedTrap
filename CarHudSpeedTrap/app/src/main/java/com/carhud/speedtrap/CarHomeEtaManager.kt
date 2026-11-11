@@ -9,6 +9,9 @@ import org.json.JSONObject
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.concurrent.thread
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -173,18 +176,19 @@ object CarHomeEtaManager {
 
         pushExecutor.execute {
             try {
+                val timeStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
                 val isArrived = (event == "car_arrived")
                 val title = if (isArrived) "🏡 爸爸已抵達家門口！" else "🚗 爸爸正在回家路上 (ETA: ${etaMinutes}分)"
                 val message = if (isArrived) {
-                    "📍 車輛已進入住家 500m 範圍！\n🚪 請準備開門迎接～"
+                    "🕒 抵達時間：$timeStr\n📍 當前位置：已抵達住家 (進入 500m 迎賓範圍)\n🚗 行駛狀態：車輛已安全返抵，準備停妥熄火\n🚪 貼心提醒：請家人準備開門迎接～"
                 } else {
-                    "⏱️ 預估抵達：${etaMinutes} 分鐘後 (ETA)\n📍 距離住家：約 ${distanceKm} km\n⚡ 當前車速：${speedKmh} km/h (行駛中)\n💡 貼心提醒：請家人注意準備～"
+                    "🕒 估算時間：$timeStr\n⏱️ 預估抵達：${etaMinutes} 分鐘後 (ETA)\n📍 距離住家：約 ${distanceKm} km\n⚡ 當前車速：${speedKmh} km/h (行駛中)\n💡 貼心提醒：請家人注意準備～"
                 }
 
                 val actionsArray = org.json.JSONArray().apply {
                     put(JSONObject().apply {
                         put("action", "view")
-                        put("label", "🗺️ 路線導航")
+                        put("label", "🗺️ 查看住家位置")
                         put("url", homeNavUrl)
                         put("clear", true)
                     })
@@ -205,8 +209,8 @@ object CarHomeEtaManager {
 
                 val tagsArray = org.json.JSONArray().apply {
                     if (isArrived) {
+                        put("car")
                         put("house")
-                        put("bell")
                         put("tada")
                     } else {
                         put("car")
@@ -219,7 +223,7 @@ object CarHomeEtaManager {
                     put("topic", channel)
                     put("title", title)
                     put("message", message)
-                    put("priority", if (isArrived) 5 else 4) // 5 = Urgent/Max, 4 = High
+                    put("priority", 4) // Priority 4: Pops out heads-up banner window across all states, obeys mute/DND
                     put("tags", tagsArray)
                     put("click", homeNavUrl)
                     put("actions", actionsArray)
