@@ -4,6 +4,7 @@ import android.content.Context
 import android.location.Location
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import org.json.JSONObject
 import java.io.OutputStreamWriter
@@ -25,19 +26,49 @@ object CarHomeEtaManager {
     private const val TAG = "CarHomeEtaManager"
     const val PREF_NAME = "carhud_prefs"
     const val KEY_HOME_ETA_ENABLED = "home_eta_enabled"
-    const val KEY_HOME_LAT = "home_lat"
-    const val KEY_HOME_LNG = "home_lng"
+    const val KEY_HOME_LAT = "home_lat_v2"
+    const val KEY_HOME_LNG = "home_lng_v2"
     const val KEY_HOME_CHANNEL = "home_channel"
     const val DEFAULT_CHANNEL = "kcchen-family-livingroom"
 
-    private const val APPROACHING_THRESHOLD_METERS = 5_000f // 5 km 接近門檻
-    private const val ARRIVED_THRESHOLD_METERS = 500f        // 500 m 到家門檻
-    private const val RESET_THRESHOLD_METERS = 8_000f        // 8 km 重設行程
+    private const val KEY_ARMED_FOR_RETURN = "home_eta_armed_for_return"
+    private const val KEY_NOTIFIED_APPROACHING = "home_eta_notified_approaching"
+    private const val KEY_NOTIFIED_ARRIVED = "home_eta_notified_arrived"
+    private const val KEY_LAST_NOTIFY_MS = "home_eta_last_notify_ms"
 
+    private const val APPROACHING_THRESHOLD_METERS = 5_000f  // 5.0 km 接近門檻上限
+    private const val MIN_APPROACHING_METERS = 1_200f        // 1.2 km 接近門檻下限 (避免在家門口 500m 旁誤發接近通知)
+    private const val ARRIVED_THRESHOLD_METERS = 500f        // 500 m 到家門檻
+    private const val ARM_RETURN_THRESHOLD_METERS = 2_000f   // 2.0 km 離家待命門檻 (必須先離家超過 2km 才會啟動返家偵測)
+    private const val MIN_APPROACH_DELTA_METERS = 250f       // 必須從高點實質朝住家縮短至少 250m 才判定為返家方向
+
+    private var stateLoaded = false
+    private var isArmedForReturn = false
     private var hasNotifiedApproaching = false
     private var hasNotifiedArrived = false
-    private var lastDistanceMeters: Float = -1f
+    private var prevDistanceMeters: Float = -1f
+    private var anchorDistanceMeters: Float = -1f
     private var lastNotifyTimeMs: Long = 0L
+
+    private fun ensureStateLoaded(context: Context) {
+        if (stateLoaded) return
+        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        isArmedForReturn = prefs.getBoolean(KEY_ARMED_FOR_RETURN, false)
+        hasNotifiedApproaching = prefs.getBoolean(KEY_NOTIFIED_APPROACHING, false)
+        hasNotifiedArrived = prefs.getBoolean(KEY_NOTIFIED_ARRIVED, false)
+        lastNotifyTimeMs = prefs.getLong(KEY_LAST_NOTIFY_MS, 0L)
+        stateLoaded = true
+    }
+
+    private fun saveState(context: Context) {
+        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        prefs.edit()
+            .putBoolean(KEY_ARMED_FOR_RETURN, isArmedForReturn)
+            .putBoolean(KEY_NOTIFIED_APPROACHING, hasNotifiedApproaching)
+            .putBoolean(KEY_NOTIFIED_ARRIVED, hasNotifiedArrived)
+            .putLong(KEY_LAST_NOTIFY_MS, lastNotifyTimeMs)
+            .apply()
+    }
 
     private val pushExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "CarEtaPushExecutor").apply { isDaemon = true }
@@ -84,7 +115,19 @@ object CarHomeEtaManager {
 
     fun onLocationUpdated(context: Context, currentLocation: Location, currentSpeedKmh: Int) {
         if (!isEnabled(context)) return
-        val homeCoords = getHomeLocation(context) ?: return
+
+        // 過濾粗糙的基地台/Wi-Fi 網路定位、誤差過大 (>80m) 的漂移點、或超過 10 秒以上的歷史快取座標 (LastKnownLocation)
+        val provider = currentLocation.provider ?: ""
+        if (provider.equals("network", ignoreCase = true)) return
+        if (currentLocation.hasAccuracy() && currentLocation.accuracy > 80f) return
+        val locationAgeNs = SystemClock.elapsedRealtimeNanos() - currentLocation.elapsedRealtimeNanos
+        if (locationAgeNs > 10_000_000_000L || locationAgeNs < -5_000_000_000L) {
+            Log.d(TAG, "忽略過期歷史快取座標 (age=${locationAgeNs / 1_000_000_000L}s)")
+            return
+        }
+
+        ensureStateLoaded(context)
+        val homeCoords = getHomeLocation(context)
 
         val homeLoc = Location("Home").apply {
             latitude = homeCoords.first
@@ -94,24 +137,34 @@ object CarHomeEtaManager {
         val distanceMeters = currentLocation.distanceTo(homeLoc)
         val now = System.currentTimeMillis()
 
-        // 離開 8 公里以外，重設行程旗標
-        if (distanceMeters > RESET_THRESHOLD_METERS) {
-            if (hasNotifiedApproaching || hasNotifiedArrived) {
-                Log.d(TAG, "車輛已遠離住家 (${distanceMeters.toInt()}m)，重設單次返家狀態")
+        // 必須先離開住家超過 2.0 公里 (ARM_RETURN_THRESHOLD_METERS)，才進入「返家待命狀態」
+        // 徹底防止早上從家裡出發剛跨過 500m 時誤判為「正在回家路上」
+        if (distanceMeters > ARM_RETURN_THRESHOLD_METERS) {
+            if (!isArmedForReturn || hasNotifiedArrived) {
+                Log.i(TAG, "車輛已離家超過 ${ARM_RETURN_THRESHOLD_METERS.toInt()}m (目前 ${distanceMeters.toInt()}m)，啟動單次返家偵測待命")
+                isArmedForReturn = true
                 hasNotifiedApproaching = false
                 hasNotifiedArrived = false
+                anchorDistanceMeters = distanceMeters
+                saveState(context)
             }
-            lastDistanceMeters = distanceMeters
-            return
         }
 
-        // 判斷是否正朝著住家靠近 (向量距離縮小，允許 150m 道路繞路容錯)
-        val isMovingCloser = lastDistanceMeters < 0 || distanceMeters < (lastDistanceMeters + 150f)
-        lastDistanceMeters = distanceMeters
+        // 記錄行程高點距離：若持續往外開 (distanceMeters 增加)，高點隨之推升，approachDelta 為 0
+        if (anchorDistanceMeters < 0f || distanceMeters > anchorDistanceMeters) {
+            anchorDistanceMeters = distanceMeters
+        }
 
-        // 1. 觸發「即將抵達 (接近中)」事件：進入 5 公里且朝住家前進
-        if (distanceMeters <= APPROACHING_THRESHOLD_METERS && distanceMeters > ARRIVED_THRESHOLD_METERS) {
-            if (!hasNotifiedApproaching && isMovingCloser) {
+        val approachDelta = anchorDistanceMeters - distanceMeters
+        val isDecreasing = prevDistanceMeters < 0f || distanceMeters <= prevDistanceMeters + 5f
+        val isTrulyApproaching = isArmedForReturn &&
+                approachDelta >= MIN_APPROACH_DELTA_METERS &&
+                isDecreasing
+        prevDistanceMeters = distanceMeters
+
+        // 1. 觸發「即將抵達 (接近中)」事件：已離家待命、進入 1.2km ~ 5.0km 區間、且實質朝住家縮短 >= 250m
+        if (distanceMeters in MIN_APPROACHING_METERS..APPROACHING_THRESHOLD_METERS) {
+            if (!hasNotifiedApproaching && isTrulyApproaching && currentSpeedKmh >= 15) {
                 // 冷卻防抖 (30 分鐘內不重複發送接近通知)
                 if (now - lastNotifyTimeMs > 1800_000L) {
                     val distKm = distanceMeters / 1000f
@@ -128,13 +181,14 @@ object CarHomeEtaManager {
                     )
                     hasNotifiedApproaching = true
                     lastNotifyTimeMs = now
+                    saveState(context)
                 }
             }
         }
 
-        // 2. 觸發「已抵達家門」事件：進入 500 公尺以內
+        // 2. 觸發「已抵達家門」事件：已離家待命、進入 500 公尺以內、且實質由外返家
         if (distanceMeters <= ARRIVED_THRESHOLD_METERS) {
-            if (hasNotifiedApproaching && !hasNotifiedArrived) {
+            if (isArmedForReturn && !hasNotifiedArrived && approachDelta >= MIN_APPROACH_DELTA_METERS) {
                 Log.i(TAG, "🏡 車輛已抵達家門口！")
                 sendEtaPush(
                     context = context,
@@ -144,6 +198,10 @@ object CarHomeEtaManager {
                     etaMinutes = 0
                 )
                 hasNotifiedArrived = true
+                hasNotifiedApproaching = true
+                isArmedForReturn = false
+                anchorDistanceMeters = distanceMeters
+                saveState(context)
             }
         }
     }
