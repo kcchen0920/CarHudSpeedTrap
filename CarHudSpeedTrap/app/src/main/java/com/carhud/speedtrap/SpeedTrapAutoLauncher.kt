@@ -159,11 +159,9 @@ object SpeedTrapAutoLauncher {
                 return
             }
 
-            // 自動喚醒（非手動強制）一律在神盾冷啟動後退回桌面，讓神盾僅在背景常駐、不佔用前景。
-            // 開機階段延長等待至 8 秒，避開與系統開機啟動競爭造成的閃爍與 WindowManager assertion。
-            val returnToHome = !forceLaunch
-            val returnDelayMs = if (isBoot) 8000L else 2800L
-            if (returnToHome) {
+            // 只有在明確要求 bringHomeToFront 為 true 時才退回桌面
+            if (bringHomeToFront) {
+                val returnDelayMs = if (isBoot) 8000L else 2800L
                 Handler(Looper.getMainLooper()).postDelayed({
                     val homeIntent = Intent(Intent.ACTION_MAIN).apply {
                         addCategory(Intent.CATEGORY_HOME)

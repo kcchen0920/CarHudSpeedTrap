@@ -33,6 +33,7 @@ class MainActivity : AppCompatActivity() {
 
     private var simulatedSpeedIndex = 0
     private val testSpeeds = intArrayOf(0, 35, 52, 68, 85, 0)
+    private var hasCheckedSpeedTrapOnLaunch = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -509,10 +510,12 @@ class MainActivity : AppCompatActivity() {
         // 啟動 GPS 監聽 (全時即時高頻測速)
         GpsSpeedManager.startListening(this)
 
-        // 前台自動確保神盾運行 (前台喚醒不受 Android 10+ BAL 後台限制)
+        // 前台自動確保神盾運行 (僅在神盾未執行時喚醒，絕不打斷使用者畫面)
         val prefs = getSharedPreferences(BootReceiver.PREF_NAME, Context.MODE_PRIVATE)
         val autoStartSpeedTrap = prefs.getBoolean(BootReceiver.KEY_AUTO_START_SPEEDTRAP, true)
-        if (autoStartSpeedTrap && !SpeedTrapListenerService.isSpeedTrapActive(this)) {
+        val isFirstLaunchCheck = !hasCheckedSpeedTrapOnLaunch
+        hasCheckedSpeedTrapOnLaunch = true
+        if (autoStartSpeedTrap && isFirstLaunchCheck && !SpeedTrapListenerService.isSpeedTrapActive(this)) {
             SpeedTrapAutoLauncher.startSpeedTrapIfNeeded(this, bringHomeToFront = false)
         }
 
